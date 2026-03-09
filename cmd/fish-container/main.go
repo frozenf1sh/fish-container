@@ -1,20 +1,18 @@
 package main
 
 import (
-	"flag"
 	"fmt"
+	"os"
+
+	"fish-container/internal/cli"
 )
 
 func main() {
-	flag.Usage = func() {
-		fmt.Println("fish-container: OCI runtime learning project")
-		fmt.Println()
-		fmt.Println("Usage:")
-		fmt.Println("  fish-container <command> [flags]")
-		fmt.Println()
-		fmt.Println("Use stage-1 scaffold first, commands will be added incrementally.")
+	if err := cli.Execute(os.Args[1:]); err != nil {
+		if cli.IsNoCommandError(err) {
+			return
+		}
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
 	}
-
-	flag.Parse()
-	flag.Usage()
 }
