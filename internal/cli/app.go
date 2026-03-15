@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 var errNoCommand = errors.New("no command provided")
@@ -32,6 +33,9 @@ func Execute(args []string) error {
 func printHelp() {
 	names := make([]string, 0, len(commands))
 	for name := range commands {
+		if strings.HasPrefix(name, "__") {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
