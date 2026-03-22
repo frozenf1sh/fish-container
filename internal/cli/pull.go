@@ -25,7 +25,11 @@ func pullCommand(args []string) error {
 	}
 
 	ref := fs.Arg(0)
+	_, _ = fmt.Fprintf(os.Stdout, "pulling manifest for %s ...\n", ref)
 	cfg := image.LoadConfigFromEnv(dataRoot)
+	if cfg.RegistryMirror != "" {
+		_, _ = fmt.Fprintf(os.Stdout, "using mirror: %s\n", cfg.RegistryMirror)
+	}
 	puller := image.NewManifestPuller(cfg)
 
 	result, err := puller.PullManifest(context.Background(), ref)
