@@ -23,7 +23,7 @@ func (r Reference) String() string {
 }
 
 func ParseReference(input string) (Reference, error) {
-	ref := strings.ToLower(strings.TrimSpace(input))
+	ref := strings.TrimSpace(input)
 	if ref == "" {
 		return Reference{}, fmt.Errorf("image reference is required")
 	}
