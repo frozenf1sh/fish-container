@@ -14,7 +14,7 @@ type ManifestPuller interface {
 
 // BlobFetcher fetches and stores layer blobs by digest.
 type BlobFetcher interface {
-	FetchBlob(ctx context.Context, descriptor Descriptor) (string, error)
+	FetchBlob(ctx context.Context, ref Reference, descriptor Descriptor) (string, error)
 }
 
 // MountRequest describes snapshot mount inputs.

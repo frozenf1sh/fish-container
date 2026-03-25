@@ -28,6 +28,10 @@ func (l Layout) BlobsDir() string {
 	return filepath.Join(l.ImagesDir(), "blobs", "sha256")
 }
 
+func (l Layout) BlobPath(digest string) string {
+	return filepath.Join(l.BlobsDir(), digest)
+}
+
 func (l Layout) ManifestsDir(registry, repository string) string {
 	return filepath.Join(l.ImagesDir(), "manifests", strings.ToLower(registry), repository)
 }
