@@ -18,6 +18,8 @@ import (
 const (
 	schema2ManifestMediaType = "application/vnd.docker.distribution.manifest.v2+json"
 	ociManifestMediaType     = "application/vnd.oci.image.manifest.v1+json"
+	dockerManifestListType   = "application/vnd.docker.distribution.manifest.list.v2+json"
+	ociImageIndexType        = "application/vnd.oci.image.index.v1+json"
 	dockerHubAuthEndpoint    = "https://auth.docker.io/token"
 	dockerHubService         = "registry.docker.io"
 )
@@ -40,9 +42,23 @@ func (p *manifestPuller) PullManifest(ctx context.Context, reference string) (*M
 		return nil, err
 	}
 
-	body, digest, err := p.fetchManifest(ctx, ref)
+	body, digest, mediaType, err := p.fetchManifest(ctx, ref)
 	if err != nil {
 		return nil, err
+	}
+
+	if mediaType == dockerManifestListType || mediaType == ociImageIndexType {
+		nextDigest, err := pickLinuxAMD64Manifest(body)
+		if err != nil {
+			return nil, err
+		}
+		body, digest, mediaType, err = p.fetchManifestTarget(ctx, ref, nextDigest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if mediaType != "" && mediaType != schema2ManifestMediaType && mediaType != ociManifestMediaType {
+		return nil, fmt.Errorf("unsupported manifest mediaType: %s", mediaType)
 	}
 
 	var manifest Schema2Manifest
@@ -78,13 +94,17 @@ func (p *manifestPuller) PullManifest(ctx context.Context, reference string) (*M
 	}, nil
 }
 
-func (p *manifestPuller) fetchManifest(ctx context.Context, ref Reference) ([]byte, string, error) {
+func (p *manifestPuller) fetchManifest(ctx context.Context, ref Reference) ([]byte, string, string, error) {
+	return p.fetchManifestTarget(ctx, ref, ref.Tag)
+}
+
+func (p *manifestPuller) fetchManifestTarget(ctx context.Context, ref Reference, target string) ([]byte, string, string, error) {
 	base := fmt.Sprintf("https://%s", ref.Registry)
 	if p.cfg.RegistryMirror != "" && ref.Registry == defaultDockerRegistry {
 		base = strings.TrimRight(p.cfg.RegistryMirror, "/")
 	}
 
-	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", strings.TrimRight(base, "/"), ref.Repository, ref.Tag)
+	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", strings.TrimRight(base, "/"), ref.Repository, target)
 
 	token := ""
 	if ref.Registry == defaultDockerRegistry {
@@ -93,9 +113,9 @@ func (p *manifestPuller) fetchManifest(ctx context.Context, ref Reference) ([]by
 
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		body, digest, err := p.doFetchManifest(ctx, manifestURL, token)
+		body, digest, mediaType, err := p.doFetchManifest(ctx, manifestURL, token)
 		if err == nil {
-			return body, digest, nil
+			return body, digest, mediaType, nil
 		}
 		lastErr = err
 		if attempt < 3 {
@@ -103,34 +123,34 @@ func (p *manifestPuller) fetchManifest(ctx context.Context, ref Reference) ([]by
 		}
 	}
 
-	return nil, "", fmt.Errorf("fetch manifest failed after retries: %w", lastErr)
+	return nil, "", "", fmt.Errorf("fetch manifest failed after retries: %w", lastErr)
 }
 
-func (p *manifestPuller) doFetchManifest(ctx context.Context, manifestURL, token string) ([]byte, string, error) {
+func (p *manifestPuller) doFetchManifest(ctx context.Context, manifestURL, token string) ([]byte, string, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("create request: %w", err)
+		return nil, "", "", fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Accept", schema2ManifestMediaType+", "+ociManifestMediaType)
+	req.Header.Set("Accept", schema2ManifestMediaType+", "+ociManifestMediaType+", "+dockerManifestListType+", "+ociImageIndexType)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := p.cfg.HTTPClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("request manifest: %w", err)
+		return nil, "", "", fmt.Errorf("request manifest: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, "", fmt.Errorf("manifest response status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, "", "", fmt.Errorf("manifest response status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", fmt.Errorf("read manifest response: %w", err)
+		return nil, "", "", fmt.Errorf("read manifest response: %w", err)
 	}
 
 	digest := strings.TrimSpace(resp.Header.Get("Docker-Content-Digest"))
@@ -139,7 +159,41 @@ func (p *manifestPuller) doFetchManifest(ctx context.Context, manifestURL, token
 		digest = "sha256:" + hex.EncodeToString(hash[:])
 	}
 
-	return body, digest, nil
+	mediaType := normalizeContentType(resp.Header.Get("Content-Type"))
+
+	return body, digest, mediaType, nil
+}
+
+func normalizeContentType(contentType string) string {
+	parts := strings.Split(contentType, ";")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+func pickLinuxAMD64Manifest(body []byte) (string, error) {
+	var index struct {
+		Manifests []struct {
+			Digest   string `json:"digest"`
+			Platform struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(body, &index); err != nil {
+		return "", fmt.Errorf("decode manifest list: %w", err)
+	}
+
+	for _, item := range index.Manifests {
+		if item.Platform.OS == "linux" && item.Platform.Architecture == "amd64" {
+			return item.Digest, nil
+		}
+	}
+
+	return "", fmt.Errorf("no linux/amd64 manifest found in index")
 }
 
 func (p *manifestPuller) fetchDockerHubToken(ctx context.Context, repository string) (string, error) {
