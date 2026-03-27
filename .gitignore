@@ -33,3 +33,6 @@ go.work.sum
 
 # Private learning docs (not pushed to GitHub)
 docs-private/
+
+# tmp file
+.tmp-data/
