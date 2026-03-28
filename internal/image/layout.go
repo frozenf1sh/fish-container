@@ -32,6 +32,14 @@ func (l Layout) BlobPath(digest string) string {
 	return filepath.Join(l.BlobsDir(), digest)
 }
 
+func (l Layout) UnpackedDir() string {
+	return filepath.Join(l.ImagesDir(), "unpacked", "sha256")
+}
+
+func (l Layout) UnpackedPath(digest string) string {
+	return filepath.Join(l.UnpackedDir(), digest)
+}
+
 func (l Layout) ManifestsDir(registry, repository string) string {
 	return filepath.Join(l.ImagesDir(), "manifests", strings.ToLower(registry), repository)
 }

@@ -17,6 +17,11 @@ type BlobFetcher interface {
 	FetchBlob(ctx context.Context, ref Reference, descriptor Descriptor) (string, error)
 }
 
+// LayerUnpacker unpacks downloaded layer blobs into CAS directories.
+type LayerUnpacker interface {
+	UnpackLayer(ctx context.Context, descriptor Descriptor) (string, error)
+}
+
 // MountRequest describes snapshot mount inputs.
 type MountRequest struct {
 	ImageDigest  string
