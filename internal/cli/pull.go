@@ -54,6 +54,12 @@ func pullCommand(args []string) error {
 	}
 	_, _ = fmt.Fprintln(os.Stdout, "layers downloaded")
 
+	_, _ = fmt.Fprintf(os.Stdout, "unpacking %d layers ...\n", len(result.Manifest.Layers))
+	if err := unpackLayers(context.Background(), cfg, result.Manifest.Layers); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(os.Stdout, "layers unpacked")
+
 	return nil
 }
 
@@ -120,4 +126,17 @@ dispatch:
 	default:
 		return nil
 	}
+}
+
+func unpackLayers(ctx context.Context, cfg image.Config, layers []image.Descriptor) error {
+	unpacker := image.NewLayerUnpacker(cfg)
+	for i, layer := range layers {
+		path, err := unpacker.UnpackLayer(ctx, layer)
+		if err != nil {
+			return fmt.Errorf("unpack layer %d %s: %w", i+1, layer.Digest, err)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "[%d/%d] layer unpacked %s -> %s\n", i+1, len(layers), layer.Digest, path)
+	}
+
+	return nil
 }
