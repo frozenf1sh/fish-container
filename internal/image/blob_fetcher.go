@@ -27,7 +27,7 @@ func NewBlobFetcher(cfg Config) BlobFetcher {
 	}
 }
 
-func (f *blobFetcher) FetchBlob(ctx context.Context, ref Reference, descriptor Descriptor) (string, error) {
+func (f *blobFetcher) FetchBlob(ctx context.Context, ref Reference, descriptor Descriptor, progress ProgressFunc) (string, error) {
 	digestHex, err := digestHexFromSHA256(descriptor.Digest)
 	if err != nil {
 		return "", err
@@ -57,7 +57,7 @@ func (f *blobFetcher) FetchBlob(ctx context.Context, ref Reference, descriptor D
 
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
-		if err := f.downloadBlob(ctx, blobURL, token, blobPath, digestHex); err == nil {
+		if err := f.downloadBlob(ctx, blobURL, token, blobPath, digestHex, descriptor.Size, progress); err == nil {
 			return blobPath, nil
 		} else {
 			lastErr = err
@@ -70,7 +70,7 @@ func (f *blobFetcher) FetchBlob(ctx context.Context, ref Reference, descriptor D
 	return "", fmt.Errorf("fetch blob failed after retries: %w", lastErr)
 }
 
-func (f *blobFetcher) downloadBlob(ctx context.Context, blobURL, token, blobPath, expectedHex string) error {
+func (f *blobFetcher) downloadBlob(ctx context.Context, blobURL, token, blobPath, expectedHex string, declaredSize int64, progress ProgressFunc) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, blobURL, nil)
 	if err != nil {
 		return fmt.Errorf("create blob request: %w", err)
@@ -101,7 +101,12 @@ func (f *blobFetcher) downloadBlob(ctx context.Context, blobURL, token, blobPath
 	}()
 
 	hasher := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(tmpFile, hasher), resp.Body); err != nil {
+	total := declaredSize
+	if total <= 0 {
+		total = resp.ContentLength
+	}
+	reader := newProgressReader(resp.Body, total, progress)
+	if _, err := io.Copy(io.MultiWriter(tmpFile, hasher), reader); err != nil {
 		return fmt.Errorf("write blob content: %w", err)
 	}
 

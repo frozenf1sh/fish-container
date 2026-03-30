@@ -20,7 +20,7 @@ func NewLayerUnpacker(cfg Config) LayerUnpacker {
 	return &layerUnpacker{layout: NewLayout(cfg.DataRoot)}
 }
 
-func (u *layerUnpacker) UnpackLayer(_ context.Context, descriptor Descriptor) (string, error) {
+func (u *layerUnpacker) UnpackLayer(_ context.Context, descriptor Descriptor, progress ProgressFunc) (string, error) {
 	digestHex, err := digestHexFromSHA256(descriptor.Digest)
 	if err != nil {
 		return "", err
@@ -44,7 +44,7 @@ func (u *layerUnpacker) UnpackLayer(_ context.Context, descriptor Descriptor) (s
 		return "", fmt.Errorf("create unpack dir: %w", err)
 	}
 
-	if err := unpackTarArchive(blobPath, targetDir); err != nil {
+	if err := unpackTarArchive(blobPath, targetDir, progress); err != nil {
 		return "", err
 	}
 
@@ -55,14 +55,19 @@ func (u *layerUnpacker) UnpackLayer(_ context.Context, descriptor Descriptor) (s
 	return targetDir, nil
 }
 
-func unpackTarArchive(blobPath, targetDir string) error {
+func unpackTarArchive(blobPath, targetDir string, progress ProgressFunc) error {
 	file, err := os.Open(blobPath)
 	if err != nil {
 		return fmt.Errorf("open blob file: %w", err)
 	}
 	defer file.Close()
 
-	reader := bufio.NewReader(file)
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat blob file: %w", err)
+	}
+
+	reader := bufio.NewReader(newProgressReader(file, stat.Size(), progress))
 	tarReader, err := newTarReader(reader)
 	if err != nil {
 		return err

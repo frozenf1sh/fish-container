@@ -2,6 +2,9 @@ package image
 
 import "context"
 
+// ProgressFunc reports current and total bytes for long-running operations.
+type ProgressFunc func(current, total int64)
+
 // Puller downloads image metadata and blobs into local store.
 type Puller interface {
 	Pull(ctx context.Context, reference string) (string, error)
@@ -14,12 +17,12 @@ type ManifestPuller interface {
 
 // BlobFetcher fetches and stores layer blobs by digest.
 type BlobFetcher interface {
-	FetchBlob(ctx context.Context, ref Reference, descriptor Descriptor) (string, error)
+	FetchBlob(ctx context.Context, ref Reference, descriptor Descriptor, progress ProgressFunc) (string, error)
 }
 
 // LayerUnpacker unpacks downloaded layer blobs into CAS directories.
 type LayerUnpacker interface {
-	UnpackLayer(ctx context.Context, descriptor Descriptor) (string, error)
+	UnpackLayer(ctx context.Context, descriptor Descriptor, progress ProgressFunc) (string, error)
 }
 
 // MountRequest describes snapshot mount inputs.
