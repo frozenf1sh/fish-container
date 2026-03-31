@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"fish-container/internal/image"
@@ -92,7 +93,16 @@ func fetchLayers(ctx context.Context, cfg image.Config, ref image.Reference, lay
 		go func() {
 			defer wg.Done()
 			for t := range tasks {
-				path, err := fetcher.FetchBlob(ctx, ref, t.desc)
+				lastStep := -1
+				path, err := fetcher.FetchBlob(ctx, ref, t.desc, func(current, total int64) {
+					step, line := renderProgressLine("downloading", t.index+1, len(layers), t.desc.Digest, current, total, &lastStep)
+					if !step {
+						return
+					}
+					outMu.Lock()
+					_, _ = fmt.Fprintln(os.Stdout, line)
+					outMu.Unlock()
+				})
 				if err != nil {
 					select {
 					case errCh <- fmt.Errorf("layer %d %s: %w", t.index+1, t.desc.Digest, err):
@@ -131,7 +141,14 @@ dispatch:
 func unpackLayers(ctx context.Context, cfg image.Config, layers []image.Descriptor) error {
 	unpacker := image.NewLayerUnpacker(cfg)
 	for i, layer := range layers {
-		path, err := unpacker.UnpackLayer(ctx, layer)
+		lastStep := -1
+		path, err := unpacker.UnpackLayer(ctx, layer, func(current, total int64) {
+			step, line := renderProgressLine("unpacking", i+1, len(layers), layer.Digest, current, total, &lastStep)
+			if !step {
+				return
+			}
+			_, _ = fmt.Fprintln(os.Stdout, line)
+		})
 		if err != nil {
 			return fmt.Errorf("unpack layer %d %s: %w", i+1, layer.Digest, err)
 		}
@@ -139,4 +156,52 @@ func unpackLayers(ctx context.Context, cfg image.Config, layers []image.Descript
 	}
 
 	return nil
+}
+
+func renderProgressLine(stage string, index, total int, digest string, current, totalBytes int64, lastStep *int) (bool, string) {
+	if totalBytes <= 0 {
+		return false, ""
+	}
+
+	percent := int((current * 100) / totalBytes)
+	if percent > 100 {
+		percent = 100
+	}
+	step := percent / 10
+	if step <= *lastStep && percent < 100 {
+		return false, ""
+	}
+	*lastStep = step
+
+	bar := progressBar(percent)
+	line := fmt.Sprintf("[%d/%d] %s %s %3d%% %s/%s %s", index, total, stage, shortDigest(digest), percent, formatBytes(current), formatBytes(totalBytes), bar)
+	return true, line
+}
+
+func shortDigest(digest string) string {
+	if len(digest) <= 20 {
+		return digest
+	}
+	return digest[:20] + "..."
+}
+
+func progressBar(percent int) string {
+	filled := percent / 10
+	if filled > 10 {
+		filled = 10
+	}
+	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", 10-filled) + "]"
+}
+
+func formatBytes(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%dB", size)
+	}
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(size)/float64(div), "KMGTPE"[exp])
 }
