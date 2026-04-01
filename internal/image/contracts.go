@@ -27,13 +27,21 @@ type LayerUnpacker interface {
 
 // MountRequest describes snapshot mount inputs.
 type MountRequest struct {
-	ImageDigest  string
-	ContainerID  string
-	LowerChainID string
+	ContainerID       string
+	LowerLayerDigests []string
+}
+
+// MountResult describes mounted overlay snapshot paths.
+type MountResult struct {
+	ContainerID string
+	MergedDir   string
+	UpperDir    string
+	WorkDir     string
+	LowerDirs   []string
 }
 
 // SnapshotMounter mounts/unmounts container rootfs snapshots.
 type SnapshotMounter interface {
-	Mount(ctx context.Context, req MountRequest) (string, error)
+	Mount(ctx context.Context, req MountRequest) (*MountResult, error)
 	Unmount(ctx context.Context, containerID string) error
 }

@@ -55,3 +55,31 @@ func (l Layout) RefsDir(registry, repository string) string {
 func (l Layout) RefPath(registry, repository, tag string) string {
 	return filepath.Join(l.RefsDir(registry, repository), tag)
 }
+
+func (l Layout) SnapshotsDir() string {
+	return filepath.Join(l.DataRoot, "snapshots")
+}
+
+func (l Layout) OverlaySnapshotsDir() string {
+	return filepath.Join(l.SnapshotsDir(), "overlay")
+}
+
+func (l Layout) OverlayContainerDir(containerID string) string {
+	return filepath.Join(l.OverlaySnapshotsDir(), containerID)
+}
+
+func (l Layout) OverlayUpperDir(containerID string) string {
+	return filepath.Join(l.OverlayContainerDir(containerID), "upper")
+}
+
+func (l Layout) OverlayWorkDir(containerID string) string {
+	return filepath.Join(l.OverlayContainerDir(containerID), "work")
+}
+
+func (l Layout) OverlayMergedDir(containerID string) string {
+	return filepath.Join(l.OverlayContainerDir(containerID), "merged")
+}
+
+func (l Layout) OverlayMetaPath(containerID string) string {
+	return filepath.Join(l.OverlayContainerDir(containerID), "mount.json")
+}
