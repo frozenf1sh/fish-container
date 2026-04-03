@@ -15,7 +15,7 @@ var commands = map[string]commandHandler{
 	"create":                  commandNotImplemented("create"),
 	"delete":                  commandNotImplemented("delete"),
 	"exec":                    commandNotImplemented("exec"),
-	"images":                  commandNotImplemented("images"),
+	"images":                  imagesCommand,
 	"network":                 commandNotImplemented("network"),
 	"ps":                      commandNotImplemented("ps"),
 	"pull":                    pullCommand,
