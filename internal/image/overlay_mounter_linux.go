@@ -40,6 +40,27 @@ func (m *overlaySnapshotMounter) Mount(_ context.Context, req MountRequest) (*Mo
 	upperDir := m.layout.OverlayUpperDir(containerID)
 	workDir := m.layout.OverlayWorkDir(containerID)
 	mergedDir := m.layout.OverlayMergedDir(containerID)
+	lockPath := m.layout.OverlayLockPath(containerID)
+
+	if err := os.MkdirAll(m.layout.OverlayContainerDir(containerID), 0o755); err != nil {
+		return nil, fmt.Errorf("create overlay container dir: %w", err)
+	}
+
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil, fmt.Errorf("container %s is already running or mounted", containerID)
+		}
+		return nil, fmt.Errorf("acquire container lock: %w", err)
+	}
+	_, _ = fmt.Fprintf(lockFile, "pid=%d\n", os.Getpid())
+	_ = lockFile.Close()
+	lockAcquired := true
+	defer func() {
+		if lockAcquired {
+			_ = os.Remove(lockPath)
+		}
+	}()
 
 	for _, dir := range []string{upperDir, workDir, mergedDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -63,6 +84,8 @@ func (m *overlaySnapshotMounter) Mount(_ context.Context, req MountRequest) (*Mo
 		_ = syscall.Unmount(mergedDir, syscall.MNT_DETACH)
 		return nil, err
 	}
+
+	lockAcquired = false
 
 	return result, nil
 }

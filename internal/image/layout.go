@@ -83,3 +83,7 @@ func (l Layout) OverlayMergedDir(containerID string) string {
 func (l Layout) OverlayMetaPath(containerID string) string {
 	return filepath.Join(l.OverlayContainerDir(containerID), "mount.json")
 }
+
+func (l Layout) OverlayLockPath(containerID string) string {
+	return filepath.Join(l.OverlayContainerDir(containerID), ".lock")
+}
