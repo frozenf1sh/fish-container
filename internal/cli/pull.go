@@ -43,6 +43,11 @@ func pullCommand(args []string) error {
 	_, _ = fmt.Fprintf(os.Stdout, "digest: %s\n", result.Digest)
 	_, _ = fmt.Fprintf(os.Stdout, "manifest: %s\n", result.ManifestPath)
 	_, _ = fmt.Fprintf(os.Stdout, "ref: %s\n", result.RefPath)
+	_, _ = fmt.Fprintf(os.Stdout, "config digest: %s\n", result.ConfigDigest)
+	_, _ = fmt.Fprintf(os.Stdout, "config: %s\n", result.ConfigPath)
+	_, _ = fmt.Fprintf(os.Stdout, "config entrypoint: %v\n", result.Config.Config.Entrypoint)
+	_, _ = fmt.Fprintf(os.Stdout, "config cmd: %v\n", result.Config.Config.Cmd)
+	_, _ = fmt.Fprintf(os.Stdout, "config env count: %d\n", len(result.Config.Config.Env))
 
 	if len(result.Manifest.Layers) == 0 {
 		_, _ = fmt.Fprintln(os.Stdout, "no layer to download")
