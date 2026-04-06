@@ -69,6 +69,16 @@ func (p *manifestPuller) PullManifest(ctx context.Context, reference string) (*M
 		return nil, fmt.Errorf("unsupported schemaVersion: %d", manifest.SchemaVersion)
 	}
 
+	configDigestHex, err := digestHexFromSHA256(manifest.Config.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config digest: %w", err)
+	}
+
+	configPath, imageConfig, err := p.pullImageConfig(ctx, ref, manifest.Config, configDigestHex)
+	if err != nil {
+		return nil, err
+	}
+
 	manifestPath := p.layout.ManifestPath(ref.Registry, ref.Repository, ref.Tag)
 	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create manifest dir: %w", err)
@@ -91,7 +101,38 @@ func (p *manifestPuller) PullManifest(ctx context.Context, reference string) (*M
 		Digest:       digest,
 		ManifestPath: manifestPath,
 		RefPath:      refPath,
+		ConfigDigest: manifest.Config.Digest,
+		ConfigPath:   configPath,
+		Config:       imageConfig,
 	}, nil
+}
+
+func (p *manifestPuller) pullImageConfig(ctx context.Context, ref Reference, descriptor Descriptor, digestHex string) (string, ImageConfig, error) {
+	fetcher := NewBlobFetcher(p.cfg)
+	blobPath, err := fetcher.FetchBlob(ctx, ref, descriptor, nil)
+	if err != nil {
+		return "", ImageConfig{}, fmt.Errorf("fetch image config blob: %w", err)
+	}
+
+	body, err := os.ReadFile(blobPath)
+	if err != nil {
+		return "", ImageConfig{}, fmt.Errorf("read image config blob: %w", err)
+	}
+
+	var cfg ImageConfig
+	if err := json.Unmarshal(body, &cfg); err != nil {
+		return "", ImageConfig{}, fmt.Errorf("decode image config: %w", err)
+	}
+
+	configPath := p.layout.ConfigPath(digestHex)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return "", ImageConfig{}, fmt.Errorf("create config dir: %w", err)
+	}
+	if err := os.WriteFile(configPath, body, 0o644); err != nil {
+		return "", ImageConfig{}, fmt.Errorf("write config index: %w", err)
+	}
+
+	return configPath, cfg, nil
 }
 
 func (p *manifestPuller) fetchManifest(ctx context.Context, ref Reference) ([]byte, string, string, error) {

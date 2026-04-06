@@ -56,6 +56,14 @@ func (l Layout) RefPath(registry, repository, tag string) string {
 	return filepath.Join(l.RefsDir(registry, repository), tag)
 }
 
+func (l Layout) ConfigsDir() string {
+	return filepath.Join(l.ImagesDir(), "configs", "sha256")
+}
+
+func (l Layout) ConfigPath(digest string) string {
+	return filepath.Join(l.ConfigsDir(), digest+".json")
+}
+
 func (l Layout) SnapshotsDir() string {
 	return filepath.Join(l.DataRoot, "snapshots")
 }

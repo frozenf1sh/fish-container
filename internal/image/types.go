@@ -15,6 +15,19 @@ type Schema2Manifest struct {
 	Layers        []Descriptor `json:"layers"`
 }
 
+// ImageConfig represents OCI/Docker image config payload.
+type ImageConfig struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
+	Config       struct {
+		Env        []string `json:"Env"`
+		Entrypoint []string `json:"Entrypoint"`
+		Cmd        []string `json:"Cmd"`
+		WorkingDir string   `json:"WorkingDir"`
+		User       string   `json:"User"`
+	} `json:"config"`
+}
+
 // ManifestResult carries parsed manifest metadata and store locations.
 type ManifestResult struct {
 	Reference    Reference
@@ -22,4 +35,7 @@ type ManifestResult struct {
 	Digest       string
 	ManifestPath string
 	RefPath      string
+	ConfigDigest string
+	ConfigPath   string
+	Config       ImageConfig
 }
