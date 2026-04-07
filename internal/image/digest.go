@@ -16,3 +16,8 @@ func digestHexFromSHA256(digest string) (string, error) {
 
 	return parts[1], nil
 }
+
+// DigestHexFromSHA256 validates a sha256 digest and returns the hex part.
+func DigestHexFromSHA256(digest string) (string, error) {
+	return digestHexFromSHA256(digest)
+}

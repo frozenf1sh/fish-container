@@ -95,3 +95,15 @@ func (l Layout) OverlayMetaPath(containerID string) string {
 func (l Layout) OverlayLockPath(containerID string) string {
 	return filepath.Join(l.OverlayContainerDir(containerID), ".lock")
 }
+
+func (l Layout) ContainersDir() string {
+	return filepath.Join(l.DataRoot, "containers")
+}
+
+func (l Layout) ContainerDir(containerID string) string {
+	return filepath.Join(l.ContainersDir(), containerID)
+}
+
+func (l Layout) ContainerConfigPath(containerID string) string {
+	return filepath.Join(l.ContainerDir(containerID), "config.json")
+}

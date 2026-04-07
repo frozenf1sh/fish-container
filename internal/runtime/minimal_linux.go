@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +20,8 @@ type RunSpec struct {
 	Rootfs   string
 	Hostname string
 	Command  []string
+	Env      []string
+	WorkDir  string
 }
 
 // Run launches a child process in new namespaces and re-enters via __init.
@@ -37,6 +40,9 @@ func Run(spec RunSpec) error {
 	}
 
 	args := []string{initCommandName, "--rootfs", absRootfs, "--hostname", spec.Hostname, "--"}
+	if spec.WorkDir != "" {
+		args = []string{initCommandName, "--rootfs", absRootfs, "--hostname", spec.Hostname, "--workdir", spec.WorkDir, "--"}
+	}
 	if len(spec.Command) == 0 {
 		args = append(args, "/bin/sh")
 	} else {
@@ -47,6 +53,13 @@ func Run(spec RunSpec) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(spec.Env) > 0 {
+		envPayload, err := json.Marshal(spec.Env)
+		if err != nil {
+			return fmt.Errorf("marshal env payload: %w", err)
+		}
+		cmd.Env = append(os.Environ(), "FISH_CONTAINER_INIT_ENV_JSON="+string(envPayload))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNS,
 	}
@@ -70,8 +83,10 @@ func ChildMain(args []string) error {
 
 	var rootfs string
 	var hostname string
+	var workdir string
 	fs.StringVar(&rootfs, "rootfs", "", "rootfs path")
 	fs.StringVar(&hostname, "hostname", "fish-container", "container hostname")
+	fs.StringVar(&workdir, "workdir", "", "container working directory")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse init flags: %w", err)
@@ -89,13 +104,27 @@ func ChildMain(args []string) error {
 	if err := setupContainerRootfs(rootfs, hostname); err != nil {
 		return err
 	}
+	if workdir != "" {
+		if err := os.Chdir(workdir); err != nil {
+			return fmt.Errorf("chdir workdir: %w", err)
+		}
+	}
 
 	bin, err := exec.LookPath(cmdArgs[0])
 	if err != nil {
 		return fmt.Errorf("lookup command: %w", err)
 	}
 
-	if err := syscall.Exec(bin, cmdArgs, os.Environ()); err != nil {
+	envVars := os.Environ()
+	if envJSON := os.Getenv("FISH_CONTAINER_INIT_ENV_JSON"); envJSON != "" {
+		var parsed []string
+		if err := json.Unmarshal([]byte(envJSON), &parsed); err != nil {
+			return fmt.Errorf("decode init env payload: %w", err)
+		}
+		envVars = parsed
+	}
+
+	if err := syscall.Exec(bin, cmdArgs, envVars); err != nil {
 		return fmt.Errorf("exec command: %w", err)
 	}
 
