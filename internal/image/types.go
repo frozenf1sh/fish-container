@@ -19,7 +19,11 @@ type Schema2Manifest struct {
 type ImageConfig struct {
 	Architecture string `json:"architecture"`
 	OS           string `json:"os"`
-	Config       struct {
+	RootFS       struct {
+		Type    string   `json:"type"`
+		DiffIDs []string `json:"diff_ids"`
+	} `json:"rootfs"`
+	Config struct {
 		Env        []string `json:"Env"`
 		Entrypoint []string `json:"Entrypoint"`
 		Cmd        []string `json:"Cmd"`

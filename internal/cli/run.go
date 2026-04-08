@@ -117,7 +117,7 @@ func prepareRunSpecFromImage(
 	if err := fetchLayers(ctx, cfg, ref, manifest.Layers); err != nil {
 		return runtime.RunSpec{}, "", func() {}, err
 	}
-	if err := unpackLayers(ctx, cfg, manifest.Layers); err != nil {
+	if err := unpackLayers(ctx, cfg, manifest.Layers, manifestResult.Config.RootFS.DiffIDs); err != nil {
 		return runtime.RunSpec{}, "", func() {}, err
 	}
 

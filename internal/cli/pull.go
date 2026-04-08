@@ -61,7 +61,7 @@ func pullCommand(args []string) error {
 	_, _ = fmt.Fprintln(os.Stdout, "layers downloaded")
 
 	_, _ = fmt.Fprintf(os.Stdout, "unpacking %d layers ...\n", len(result.Manifest.Layers))
-	if err := unpackLayers(context.Background(), cfg, result.Manifest.Layers); err != nil {
+	if err := unpackLayers(context.Background(), cfg, result.Manifest.Layers, result.Config.RootFS.DiffIDs); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintln(os.Stdout, "layers unpacked")
@@ -143,11 +143,20 @@ dispatch:
 	}
 }
 
-func unpackLayers(ctx context.Context, cfg image.Config, layers []image.Descriptor) error {
+func unpackLayers(ctx context.Context, cfg image.Config, layers []image.Descriptor, diffIDs []string) error {
+	if len(diffIDs) > 0 && len(diffIDs) != len(layers) {
+		return fmt.Errorf("layer and diff_id count mismatch: layers=%d diff_ids=%d", len(layers), len(diffIDs))
+	}
+
 	unpacker := image.NewLayerUnpacker(cfg)
 	for i, layer := range layers {
+		expectedDiffID := ""
+		if len(diffIDs) > 0 {
+			expectedDiffID = diffIDs[i]
+		}
+
 		lastStep := -1
-		path, err := unpacker.UnpackLayer(ctx, layer, func(current, total int64) {
+		path, err := unpacker.UnpackLayer(ctx, layer, expectedDiffID, func(current, total int64) {
 			step, line := renderProgressLine("unpacking", i+1, len(layers), layer.Digest, current, total, &lastStep)
 			if !step {
 				return

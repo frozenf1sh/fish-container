@@ -22,7 +22,7 @@ type BlobFetcher interface {
 
 // LayerUnpacker unpacks downloaded layer blobs into CAS directories.
 type LayerUnpacker interface {
-	UnpackLayer(ctx context.Context, descriptor Descriptor, progress ProgressFunc) (string, error)
+	UnpackLayer(ctx context.Context, descriptor Descriptor, expectedDiffID string, progress ProgressFunc) (string, error)
 }
 
 // MountRequest describes snapshot mount inputs.
