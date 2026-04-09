@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"fish-container/internal/cgroups"
 	"fish-container/internal/image"
 	"fish-container/internal/runtime"
 	"fish-container/internal/store"
@@ -165,6 +166,9 @@ func deleteCommand(args []string) error {
 		return fmt.Errorf("remove container dir: %w", err)
 	}
 	if err := stateStore.Delete(context.Background(), containerID); err != nil {
+		return err
+	}
+	if err := cgroups.NewManager().Delete(context.Background(), containerID); err != nil {
 		return err
 	}
 
@@ -458,9 +462,23 @@ func createContainer(ctx context.Context, opts createOptions) (string, error) {
 
 	containerCfg := resolveContainerConfig(baseCfg, opts.cmdOverride, opts.envOverrides, opts.workdir, opts.user)
 
+	cgroupApplied := false
+	if cgroupPath, enabled, err := cgroups.ResolveOCIPath(opts.containerID); err != nil {
+		return "", err
+	} else if enabled {
+		if err := cgroups.NewManager().Apply(ctx, opts.containerID); err != nil {
+			return "", err
+		}
+		cgroupApplied = true
+		containerCfg.CgroupsPath = cgroupPath
+	}
+
 	configStore := store.NewContainerConfigStore(opts.dataRoot)
 	configPath, err := configStore.Save(ctx, containerCfg)
 	if err != nil {
+		if cgroupApplied {
+			_ = cgroups.NewManager().Delete(context.Background(), opts.containerID)
+		}
 		if mountedFromImage {
 			_ = image.NewSnapshotMounter(image.LoadConfigFromEnv(opts.dataRoot)).Unmount(context.Background(), opts.containerID)
 		}
@@ -469,6 +487,9 @@ func createContainer(ctx context.Context, opts createOptions) (string, error) {
 
 	bundle, err := runtime.BuildOCIBundle(ctx, opts.dataRoot, containerCfg)
 	if err != nil {
+		if cgroupApplied {
+			_ = cgroups.NewManager().Delete(context.Background(), opts.containerID)
+		}
 		if mountedFromImage {
 			_ = image.NewSnapshotMounter(image.LoadConfigFromEnv(opts.dataRoot)).Unmount(context.Background(), opts.containerID)
 		}

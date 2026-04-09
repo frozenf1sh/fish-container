@@ -17,6 +17,7 @@ type ContainerConfig struct {
 	ImageRef            string    `json:"imageRef,omitempty"`
 	ImageManifestDigest string    `json:"imageManifestDigest,omitempty"`
 	ImageConfigDigest   string    `json:"imageConfigDigest,omitempty"`
+	CgroupsPath         string    `json:"cgroupsPath,omitempty"`
 	Rootfs              string    `json:"rootfs"`
 	Entrypoint          []string  `json:"entrypoint,omitempty"`
 	Cmd                 []string  `json:"cmd,omitempty"`

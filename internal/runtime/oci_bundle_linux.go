@@ -175,6 +175,7 @@ func buildSpec(cfg store.ContainerConfig) specs.Spec {
 			{Destination: "/sys", Type: "sysfs", Source: "sysfs", Options: []string{"nosuid", "noexec", "nodev", "ro"}},
 		},
 		Linux: &specs.Linux{
+			CgroupsPath: cfg.CgroupsPath,
 			Namespaces: []specs.LinuxNamespace{
 				{Type: specs.PIDNamespace},
 				{Type: specs.NetworkNamespace},
