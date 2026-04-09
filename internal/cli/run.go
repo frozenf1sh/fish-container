@@ -157,7 +157,27 @@ func prepareRunSpecFromImage(
 		_ = mounter.Unmount(context.Background(), containerID)
 		return runtime.RunSpec{}, "", func() {}, err
 	}
+	bundle, err := runtime.BuildOCIBundle(ctx, dataRoot, containerCfg)
+	if err != nil {
+		_ = mounter.Unmount(context.Background(), containerID)
+		return runtime.RunSpec{}, "", func() {}, err
+	}
+
+	stateStore := runtime.NewFileStateStore(dataRoot)
+	statePath, err := stateStore.Save(ctx, runtime.State{
+		ID:          containerID,
+		Status:      runtime.StateCreating,
+		Bundle:      bundle.BundlePath,
+		Annotations: map[string]string{"fish-container.io/mode": "run"},
+	})
+	if err != nil {
+		_ = mounter.Unmount(context.Background(), containerID)
+		return runtime.RunSpec{}, "", func() {}, err
+	}
 	_, _ = fmt.Fprintf(os.Stdout, "container config: %s\n", configPath)
+	_, _ = fmt.Fprintf(os.Stdout, "bundle: %s\n", bundle.BundlePath)
+	_, _ = fmt.Fprintf(os.Stdout, "bundle spec: %s\n", bundle.SpecPath)
+	_, _ = fmt.Fprintf(os.Stdout, "runtime state: %s\n", statePath)
 	_, _ = fmt.Fprintf(os.Stdout, "container command: %v\n", containerCfg.EffectiveCommand())
 
 	cleanup := func() {

@@ -107,3 +107,27 @@ func (l Layout) ContainerDir(containerID string) string {
 func (l Layout) ContainerConfigPath(containerID string) string {
 	return filepath.Join(l.ContainerDir(containerID), "config.json")
 }
+
+func (l Layout) BundleDir(containerID string) string {
+	return filepath.Join(l.ContainerDir(containerID), "bundle")
+}
+
+func (l Layout) BundleRootfsPath(containerID string) string {
+	return filepath.Join(l.BundleDir(containerID), "rootfs")
+}
+
+func (l Layout) BundleSpecPath(containerID string) string {
+	return filepath.Join(l.BundleDir(containerID), "config.json")
+}
+
+func (l Layout) RuntimeDir() string {
+	return filepath.Join(l.DataRoot, "runtime")
+}
+
+func (l Layout) RuntimeContainerDir(containerID string) string {
+	return filepath.Join(l.RuntimeDir(), containerID)
+}
+
+func (l Layout) RuntimeStatePath(containerID string) string {
+	return filepath.Join(l.RuntimeContainerDir(containerID), "state.json")
+}
