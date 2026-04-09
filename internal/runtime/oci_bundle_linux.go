@@ -41,9 +41,17 @@ func BuildOCIBundle(ctx context.Context, dataRoot string, cfg store.ContainerCon
 	}
 
 	layout := image.NewLayout(dataRoot)
-	bundlePath := layout.BundleDir(cfg.ID)
-	specPath := layout.BundleSpecPath(cfg.ID)
-	bundleRootfs := layout.BundleRootfsPath(cfg.ID)
+	bundlePath, err := filepath.Abs(layout.BundleDir(cfg.ID))
+	if err != nil {
+		return nil, fmt.Errorf("resolve bundle dir: %w", err)
+	}
+	specPath := filepath.Join(bundlePath, "config.json")
+	bundleRootfs := filepath.Join(bundlePath, "rootfs")
+
+	rootfsTarget, err := filepath.Abs(cfg.Rootfs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve container rootfs: %w", err)
+	}
 
 	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
 		return nil, fmt.Errorf("create bundle dir: %w", err)
@@ -52,7 +60,7 @@ func BuildOCIBundle(ctx context.Context, dataRoot string, cfg store.ContainerCon
 	if err := os.RemoveAll(bundleRootfs); err != nil {
 		return nil, fmt.Errorf("cleanup bundle rootfs path: %w", err)
 	}
-	if err := os.Symlink(cfg.Rootfs, bundleRootfs); err != nil {
+	if err := os.Symlink(rootfsTarget, bundleRootfs); err != nil {
 		return nil, fmt.Errorf("link bundle rootfs: %w", err)
 	}
 

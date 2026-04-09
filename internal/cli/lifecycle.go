@@ -247,8 +247,10 @@ func psCommand(args []string) error {
 
 	var dataRoot string
 	var quiet bool
+	var containerID string
 	fs.StringVar(&dataRoot, "data-root", "/var/lib/fish-container", "runtime data root")
 	fs.BoolVar(&quiet, "q", false, "only print container ids")
+	fs.StringVar(&containerID, "container", "", "filter by container id")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse ps flags: %w", err)
@@ -266,6 +268,9 @@ func psCommand(args []string) error {
 	ids := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
+			if containerID != "" && entry.Name() != containerID {
+				continue
+			}
 			ids = append(ids, entry.Name())
 		}
 	}
