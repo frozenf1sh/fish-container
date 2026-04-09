@@ -11,16 +11,18 @@ type commandHandler func(args []string) error
 
 var commands = map[string]commandHandler{
 	runtime.InitCommandName(): runInitCommand,
+	startDaemonCommandName:    startDaemonCommand,
 	"cleanup":                 runCleanupCommand,
-	"create":                  commandNotImplemented("create"),
-	"delete":                  commandNotImplemented("delete"),
+	"create":                  createCommand,
+	"delete":                  deleteCommand,
 	"exec":                    commandNotImplemented("exec"),
 	"images":                  imagesCommand,
 	"network":                 commandNotImplemented("network"),
 	"ps":                      commandNotImplemented("ps"),
 	"pull":                    pullCommand,
 	"run":                     runCommand,
-	"start":                   commandNotImplemented("start"),
+	"start":                   startCommand,
+	"state":                   stateCommand,
 }
 
 func runInitCommand(args []string) error {

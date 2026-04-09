@@ -26,17 +26,31 @@ type RunSpec struct {
 
 // Run launches a child process in new namespaces and re-enters via __init.
 func Run(spec RunSpec) error {
+	cmd, err := Start(spec, true)
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("run isolated process: %w", err)
+	}
+
+	return nil
+}
+
+// Start launches isolated process and returns running command handle.
+func Start(spec RunSpec, attachIO bool) (*exec.Cmd, error) {
 	if spec.Rootfs == "" {
-		return errors.New("rootfs is required")
+		return nil, errors.New("rootfs is required")
 	}
 
 	absRootfs, err := filepath.Abs(spec.Rootfs)
 	if err != nil {
-		return fmt.Errorf("resolve rootfs: %w", err)
+		return nil, fmt.Errorf("resolve rootfs: %w", err)
 	}
 
 	if _, err := os.Stat(absRootfs); err != nil {
-		return fmt.Errorf("stat rootfs: %w", err)
+		return nil, fmt.Errorf("stat rootfs: %w", err)
 	}
 
 	args := []string{initCommandName, "--rootfs", absRootfs, "--hostname", spec.Hostname, "--"}
@@ -50,13 +64,15 @@ func Run(spec RunSpec) error {
 	}
 
 	cmd := exec.Command("/proc/self/exe", args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if attachIO {
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	if len(spec.Env) > 0 {
 		envPayload, err := json.Marshal(spec.Env)
 		if err != nil {
-			return fmt.Errorf("marshal env payload: %w", err)
+			return nil, fmt.Errorf("marshal env payload: %w", err)
 		}
 		cmd.Env = append(os.Environ(), "FISH_CONTAINER_INIT_ENV_JSON="+string(envPayload))
 	}
@@ -64,11 +80,11 @@ func Run(spec RunSpec) error {
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNS,
 	}
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("run isolated process: %w", err)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start isolated process: %w", err)
 	}
 
-	return nil
+	return cmd, nil
 }
 
 // InitCommandName is the hidden subcommand used for reexec.

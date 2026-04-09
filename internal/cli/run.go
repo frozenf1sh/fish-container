@@ -6,11 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"fish-container/internal/image"
-	"fish-container/internal/runtime"
 	"fish-container/internal/store"
 )
 
@@ -36,25 +36,29 @@ func runCommand(args []string) error {
 	var imageRef string
 	var dataRoot string
 	var containerID string
-	var keepSnapshot bool
 	var hostname string
 	var workdir string
 	var user string
+	var detach bool
+	var keepSnapshot bool
 	var envOverrides envListFlag
 	fs.StringVar(&rootfs, "rootfs", "", "local rootfs path")
 	fs.StringVar(&imageRef, "image", "", "image reference, e.g. alpine:latest")
 	fs.StringVar(&dataRoot, "data-root", "/var/lib/fish-container", "runtime data root")
-	fs.StringVar(&containerID, "container", "", "container id for overlay snapshot")
-	fs.BoolVar(&keepSnapshot, "keep-snapshot", false, "keep overlay snapshot after run exits")
+	fs.StringVar(&containerID, "container", "", "container id")
 	fs.StringVar(&hostname, "hostname", "fish-container", "container hostname")
 	fs.StringVar(&workdir, "workdir", "", "override container working directory")
 	fs.StringVar(&user, "user", "", "override container user")
+	fs.BoolVar(&detach, "d", false, "run container in background")
+	fs.BoolVar(&keepSnapshot, "keep-snapshot", false, "deprecated: lifecycle mode keeps snapshot until delete")
 	fs.Var(&envOverrides, "env", "override environment variable, e.g. --env KEY=VALUE")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse run flags: %w", err)
 	}
-
+	if keepSnapshot {
+		_, _ = fmt.Fprintln(os.Stdout, "warn: --keep-snapshot is deprecated in lifecycle mode and is ignored")
+	}
 	if rootfs != "" && imageRef != "" {
 		return fmt.Errorf("--rootfs and --image are mutually exclusive")
 	}
@@ -65,60 +69,61 @@ func runCommand(args []string) error {
 		containerID = fmt.Sprintf("run-%d", time.Now().UnixNano())
 	}
 
-	runSpec := runtime.RunSpec{
-		Rootfs:   rootfs,
-		Hostname: hostname,
-		Command:  fs.Args(),
-	}
-	cleanup := func() {}
-
-	if imageRef != "" {
-		ctx := context.Background()
-		spec, mountedRootfs, release, err := prepareRunSpecFromImage(ctx, dataRoot, containerID, imageRef, keepSnapshot, hostname, fs.Args(), envOverrides, workdir, user)
-		if err != nil {
-			return err
-		}
-		runSpec = spec
-		runSpec.Rootfs = mountedRootfs
-		cleanup = release
-	} else {
-		runSpec.WorkDir = workdir
-		runSpec.Env = mergeEnv(nil, envOverrides)
+	opts := createOptions{
+		dataRoot:     dataRoot,
+		containerID:  containerID,
+		rootfs:       rootfs,
+		imageRef:     imageRef,
+		hostname:     hostname,
+		workdir:      workdir,
+		user:         user,
+		envOverrides: envOverrides,
+		cmdOverride:  fs.Args(),
 	}
 
-	defer cleanup()
-
-	return runtime.Run(runSpec)
+	if _, err := createContainer(context.Background(), opts); err != nil {
+		return err
+	}
+	return startContainer(context.Background(), dataRoot, containerID, detach)
 }
 
-func prepareRunSpecFromImage(
-	ctx context.Context,
-	dataRoot, containerID, imageRef string,
-	keepSnapshot bool,
-	hostname string,
-	commandOverride []string,
-	envOverrides []string,
-	workdirOverride string,
-	userOverride string,
-) (runtime.RunSpec, string, func(), error) {
+type createOptions struct {
+	dataRoot     string
+	containerID  string
+	rootfs       string
+	imageRef     string
+	hostname     string
+	workdir      string
+	user         string
+	envOverrides []string
+	cmdOverride  []string
+}
+
+type preparedImage struct {
+	ref      image.Reference
+	manifest *image.ManifestResult
+	rootfs   string
+}
+
+func prepareRootfsFromImage(ctx context.Context, dataRoot, containerID, imageRef string) (*preparedImage, error) {
 	cfg := image.LoadConfigFromEnv(dataRoot)
 	manifestResult, err := loadOrPullManifest(ctx, cfg, imageRef)
 	if err != nil {
-		return runtime.RunSpec{}, "", func() {}, err
+		return nil, err
 	}
-
 	ref := manifestResult.Reference
 	manifest := manifestResult.Manifest
+
 	if len(manifest.Layers) == 0 {
-		return runtime.RunSpec{}, "", func() {}, fmt.Errorf("image has no layers: %s", ref.String())
+		return nil, fmt.Errorf("image has no layers: %s", ref.String())
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "preparing layers for run from %s ...\n", ref.String())
+	_, _ = fmt.Fprintf(os.Stdout, "preparing layers for create from %s ...\n", ref.String())
 	if err := fetchLayers(ctx, cfg, ref, manifest.Layers); err != nil {
-		return runtime.RunSpec{}, "", func() {}, err
+		return nil, err
 	}
 	if err := unpackLayers(ctx, cfg, manifest.Layers, manifestResult.Config.RootFS.DiffIDs); err != nil {
-		return runtime.RunSpec{}, "", func() {}, err
+		return nil, err
 	}
 
 	digests := make([]string, 0, len(manifest.Layers))
@@ -132,73 +137,11 @@ func prepareRunSpecFromImage(
 		LowerLayerDigests: digests,
 	})
 	if err != nil {
-		return runtime.RunSpec{}, "", func() {}, err
-	}
-	_, _ = fmt.Fprintf(os.Stdout, "run rootfs mounted: %s\n", mountResult.MergedDir)
-
-	containerCfg := resolveContainerConfig(store.ContainerConfig{
-		ID:                  containerID,
-		ImageRef:            ref.String(),
-		ImageManifestDigest: manifestResult.Digest,
-		ImageConfigDigest:   manifestResult.ConfigDigest,
-		Rootfs:              mountResult.MergedDir,
-		Entrypoint:          append([]string(nil), manifestResult.Config.Config.Entrypoint...),
-		Cmd:                 append([]string(nil), manifestResult.Config.Config.Cmd...),
-		Env:                 append([]string(nil), manifestResult.Config.Config.Env...),
-		WorkingDir:          manifestResult.Config.Config.WorkingDir,
-		User:                manifestResult.Config.Config.User,
-		Hostname:            hostname,
-		CreatedAt:           time.Now().UTC(),
-	}, commandOverride, envOverrides, workdirOverride, userOverride)
-
-	configStore := store.NewContainerConfigStore(dataRoot)
-	configPath, err := configStore.Save(ctx, containerCfg)
-	if err != nil {
-		_ = mounter.Unmount(context.Background(), containerID)
-		return runtime.RunSpec{}, "", func() {}, err
-	}
-	bundle, err := runtime.BuildOCIBundle(ctx, dataRoot, containerCfg)
-	if err != nil {
-		_ = mounter.Unmount(context.Background(), containerID)
-		return runtime.RunSpec{}, "", func() {}, err
+		return nil, err
 	}
 
-	stateStore := runtime.NewFileStateStore(dataRoot)
-	statePath, err := stateStore.Save(ctx, runtime.State{
-		ID:          containerID,
-		Status:      runtime.StateCreating,
-		Bundle:      bundle.BundlePath,
-		Annotations: map[string]string{"fish-container.io/mode": "run"},
-	})
-	if err != nil {
-		_ = mounter.Unmount(context.Background(), containerID)
-		return runtime.RunSpec{}, "", func() {}, err
-	}
-	_, _ = fmt.Fprintf(os.Stdout, "container config: %s\n", configPath)
-	_, _ = fmt.Fprintf(os.Stdout, "bundle: %s\n", bundle.BundlePath)
-	_, _ = fmt.Fprintf(os.Stdout, "bundle spec: %s\n", bundle.SpecPath)
-	_, _ = fmt.Fprintf(os.Stdout, "runtime state: %s\n", statePath)
-	_, _ = fmt.Fprintf(os.Stdout, "container command: %v\n", containerCfg.EffectiveCommand())
-
-	cleanup := func() {
-		if keepSnapshot {
-			_, _ = fmt.Fprintln(os.Stdout, "snapshot preserved by --keep-snapshot")
-			return
-		}
-		if err := mounter.Unmount(context.Background(), containerID); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warn: unmount snapshot failed: %v\n", err)
-			return
-		}
-		_, _ = fmt.Fprintln(os.Stdout, "run snapshot cleaned")
-	}
-
-	return runtime.RunSpec{
-		Rootfs:   mountResult.MergedDir,
-		Hostname: containerCfg.Hostname,
-		Command:  containerCfg.EffectiveCommand(),
-		Env:      containerCfg.Env,
-		WorkDir:  containerCfg.WorkingDir,
-	}, mountResult.MergedDir, cleanup, nil
+	_, _ = fmt.Fprintf(os.Stdout, "container rootfs mounted: %s\n", mountResult.MergedDir)
+	return &preparedImage{ref: ref, manifest: manifestResult, rootfs: mountResult.MergedDir}, nil
 }
 
 func resolveContainerConfig(base store.ContainerConfig, cmdOverride, envOverrides []string, workdirOverride, userOverride string) store.ContainerConfig {
@@ -303,4 +246,15 @@ func readLocalDigest(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(body))
+}
+
+func absRootfs(path string) (string, error) {
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve rootfs: %w", err)
+	}
+	if _, err := os.Stat(resolved); err != nil {
+		return "", fmt.Errorf("stat rootfs: %w", err)
+	}
+	return resolved, nil
 }

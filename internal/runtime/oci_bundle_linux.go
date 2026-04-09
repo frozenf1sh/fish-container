@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -71,6 +72,64 @@ func BuildOCIBundle(ctx context.Context, dataRoot string, cfg store.ContainerCon
 		SpecPath:   specPath,
 		RootfsPath: bundleRootfs,
 		Spec:       spec,
+	}, nil
+}
+
+// LoadBundleSpec loads OCI config.json from bundle path.
+func LoadBundleSpec(bundlePath string) (*specs.Spec, error) {
+	specPath := filepath.Join(bundlePath, "config.json")
+	body, err := os.ReadFile(specPath)
+	if err != nil {
+		return nil, fmt.Errorf("read bundle spec: %w", err)
+	}
+
+	var spec specs.Spec
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decode bundle spec: %w", err)
+	}
+	if spec.Process == nil {
+		return nil, fmt.Errorf("invalid bundle spec: process is required")
+	}
+	if spec.Root == nil {
+		return nil, fmt.Errorf("invalid bundle spec: root is required")
+	}
+
+	return &spec, nil
+}
+
+// RunSpecFromOCISpec converts OCI spec payload into runtime RunSpec.
+func RunSpecFromOCISpec(bundlePath string, spec *specs.Spec) (RunSpec, error) {
+	if spec == nil {
+		return RunSpec{}, fmt.Errorf("spec is required")
+	}
+	if spec.Process == nil {
+		return RunSpec{}, fmt.Errorf("spec.process is required")
+	}
+	if spec.Root == nil {
+		return RunSpec{}, fmt.Errorf("spec.root is required")
+	}
+
+	rootfsPath := spec.Root.Path
+	if !filepath.IsAbs(rootfsPath) {
+		rootfsPath = filepath.Join(bundlePath, rootfsPath)
+	}
+
+	command := append([]string(nil), spec.Process.Args...)
+	if len(command) == 0 {
+		return RunSpec{}, fmt.Errorf("spec.process.args is required")
+	}
+
+	workdir := spec.Process.Cwd
+	if strings.TrimSpace(workdir) == "" {
+		workdir = "/"
+	}
+
+	return RunSpec{
+		Rootfs:   rootfsPath,
+		Hostname: spec.Hostname,
+		Command:  command,
+		Env:      append([]string(nil), spec.Process.Env...),
+		WorkDir:  workdir,
 	}, nil
 }
 
