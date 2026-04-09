@@ -9,6 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"fish-container/internal/image"
@@ -165,6 +170,225 @@ func deleteCommand(args []string) error {
 
 	_, _ = fmt.Fprintf(os.Stdout, "container deleted: %s\n", containerID)
 	return nil
+}
+
+func killCommand(args []string) error {
+	fs := flag.NewFlagSet("kill", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var dataRoot string
+	var containerID string
+	var signalValue string
+	fs.StringVar(&dataRoot, "data-root", "/var/lib/fish-container", "runtime data root")
+	fs.StringVar(&containerID, "container", "", "container id")
+	fs.StringVar(&signalValue, "signal", "TERM", "signal name or number")
+
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("parse kill flags: %w", err)
+	}
+	if containerID == "" {
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: fish-container kill [--data-root PATH] [--signal TERM] --container <id> | fish-container kill <id>")
+		}
+		containerID = fs.Arg(0)
+	}
+
+	sig, err := parseSignal(signalValue)
+	if err != nil {
+		return err
+	}
+
+	stateStore := runtime.NewFileStateStore(dataRoot)
+	state, err := stateStore.Load(context.Background(), containerID)
+	if err != nil {
+		return err
+	}
+	if state.Status != runtime.StateRunning {
+		return fmt.Errorf("kill requires state=running, current=%s", state.Status)
+	}
+	if state.Pid <= 0 {
+		return fmt.Errorf("invalid running pid in state: %d", state.Pid)
+	}
+
+	if err := syscall.Kill(state.Pid, sig); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			if err := runtime.ValidateTransition(runtime.StateRunning, runtime.StateStopped); err != nil {
+				return err
+			}
+			state.Status = runtime.StateStopped
+			state.Pid = 0
+			_, _ = stateStore.Save(context.Background(), *state)
+			_, _ = fmt.Fprintf(os.Stdout, "container already exited: %s\n", containerID)
+			return nil
+		}
+		return fmt.Errorf("send signal %d to pid %d: %w", sig, state.Pid, err)
+	}
+
+	if err := waitProcessExit(state.Pid, 5*time.Second); err != nil {
+		return fmt.Errorf("wait process exit after signal: %w", err)
+	}
+
+	if err := runtime.ValidateTransition(runtime.StateRunning, runtime.StateStopped); err != nil {
+		return err
+	}
+	state.Status = runtime.StateStopped
+	state.Pid = 0
+	if _, err := stateStore.Save(context.Background(), *state); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(os.Stdout, "container killed: %s\n", containerID)
+	return nil
+}
+
+func psCommand(args []string) error {
+	fs := flag.NewFlagSet("ps", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var dataRoot string
+	var quiet bool
+	fs.StringVar(&dataRoot, "data-root", "/var/lib/fish-container", "runtime data root")
+	fs.BoolVar(&quiet, "q", false, "only print container ids")
+
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("parse ps flags: %w", err)
+	}
+
+	layout := image.NewLayout(dataRoot)
+	entries, err := os.ReadDir(layout.RuntimeDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read runtime dir: %w", err)
+	}
+
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+
+	stateStore := runtime.NewFileStateStore(dataRoot)
+	configStore := store.NewContainerConfigStore(dataRoot)
+
+	if quiet {
+		for _, id := range ids {
+			state, err := stateStore.Load(context.Background(), id)
+			if err != nil {
+				continue
+			}
+			if state.Status == runtime.StateRunning && state.Pid > 0 && !processAlive(state.Pid) {
+				_ = reconcileStoppedState(stateStore, state)
+			}
+			_, _ = fmt.Fprintln(os.Stdout, id)
+		}
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "ID\tSTATUS\tPID\tIMAGE\tCREATED\tCONFIG_PATH\tSTATE_PATH\tBUNDLE_PATH")
+
+	for _, id := range ids {
+		state, err := stateStore.Load(context.Background(), id)
+		if err != nil {
+			continue
+		}
+		if state.Status == runtime.StateRunning && state.Pid > 0 && !processAlive(state.Pid) {
+			if err := reconcileStoppedState(stateStore, state); err == nil {
+				state.Status = runtime.StateStopped
+				state.Pid = 0
+			}
+		}
+
+		imageRef := ""
+		createdAt := ""
+		if cfg, err := configStore.Load(context.Background(), id); err == nil {
+			imageRef = cfg.ImageRef
+			createdAt = cfg.CreatedAt.Format(time.RFC3339)
+		}
+
+		_, _ = fmt.Fprintf(
+			tw,
+			"%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			id,
+			state.Status,
+			state.Pid,
+			imageRef,
+			createdAt,
+			layout.ContainerConfigPath(id),
+			layout.RuntimeStatePath(id),
+			state.Bundle,
+		)
+	}
+
+	return tw.Flush()
+}
+
+func parseSignal(value string) (syscall.Signal, error) {
+	trimmed := strings.TrimSpace(strings.ToUpper(value))
+	if trimmed == "" {
+		return syscall.SIGTERM, nil
+	}
+	if n, err := strconv.Atoi(trimmed); err == nil {
+		if n <= 0 {
+			return 0, fmt.Errorf("invalid signal number: %d", n)
+		}
+		return syscall.Signal(n), nil
+	}
+
+	trimmed = strings.TrimPrefix(trimmed, "SIG")
+	switch trimmed {
+	case "TERM":
+		return syscall.SIGTERM, nil
+	case "KILL":
+		return syscall.SIGKILL, nil
+	case "INT":
+		return syscall.SIGINT, nil
+	case "QUIT":
+		return syscall.SIGQUIT, nil
+	case "HUP":
+		return syscall.SIGHUP, nil
+	default:
+		return 0, fmt.Errorf("unsupported signal: %s", value)
+	}
+}
+
+func waitProcessExit(pid int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !processAlive(pid) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("process %d still alive after %s", pid, timeout)
+}
+
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	if err == nil {
+		return true
+	}
+	return !errors.Is(err, syscall.ESRCH)
+}
+
+func reconcileStoppedState(store *runtime.FileStateStore, state *runtime.State) error {
+	if state == nil {
+		return fmt.Errorf("state is required")
+	}
+	if err := runtime.ValidateTransition(runtime.StateRunning, runtime.StateStopped); err != nil {
+		return err
+	}
+	state.Status = runtime.StateStopped
+	state.Pid = 0
+	_, err := store.Save(context.Background(), *state)
+	return err
 }
 
 func startDaemonCommand(args []string) error {
