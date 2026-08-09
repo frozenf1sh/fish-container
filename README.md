@@ -1,1 +1,67 @@
 # fish-container
+
+一个用 Go 手写的 Linux 容器运行时，用于学习 OCI Runtime、Linux namespace、cgroups 和容器生命周期。
+
+项目以**可读、可观察、可验证**为目标，不替代 Docker 或 runc。最终目标是作为自定义 OCI runtime 接入 containerd/k3s，并完整观察 Pod 从创建到退出的运行过程。
+
+> 当前处于实验阶段，仅适合受控的 Linux 学习环境，请勿运行不可信镜像或生产负载。
+
+## 已实现
+
+- 拉取并校验 OCI/Docker 镜像 manifest、config 和 layers
+- 内容寻址存储、layer 解包和 overlayfs rootfs
+- 生成 OCI bundle 与 `config.json`
+- PID、UTS、IPC、mount namespace 和 `pivot_root`
+- `create`、`start`、`run`、`state`、`ps`、`kill`、`delete`
+- 文件化容器状态与初步 cgroups v2 支持
+
+尚未完整支持 OCI mounts、用户与 capabilities、seccomp、网络、`exec` 和 rootless。详见 [OCI 与 k3s 路线图](docs/architecture/oci-k3s-roadmap.md)。
+
+## 架构
+
+```text
+image reference
+  -> manifest / config / layers
+  -> CAS + unpack
+  -> overlay rootfs
+  -> OCI bundle
+  -> namespaces + pivot_root
+  -> process lifecycle + state
+```
+
+接入 k3s 后，镜像、snapshot 和 CNI 由 containerd/k3s 负责，fish-container 专注于消费 OCI bundle 并管理容器进程。
+
+## 快速体验
+
+要求：Linux、Go 1.22+、root 权限，以及支持 overlayfs、namespaces 和 cgroups v2 的内核。
+
+```bash
+make build
+
+sudo ./bin/fish-container pull alpine:latest
+sudo ./bin/fish-container run \
+  --image alpine:latest \
+  --container demo \
+  /bin/echo hello-from-fish
+
+sudo ./bin/fish-container state demo
+sudo ./bin/fish-container delete demo
+```
+
+## 路线
+
+1. 使现有 engine 严格执行 OCI bundle 和生命周期语义
+2. 兼容 `containerd-shim-runc-v2` 所需的 OCI runtime CLI
+3. 通过 containerd `BinaryName` 与 Kubernetes `RuntimeClass` 接入 k3s
+4. 补齐结构化日志、生命周期事件和运行指标
+5. 进阶实现独立的 `containerd-shim-fish-v2`
+
+## 文档
+
+- [OCI 与 k3s 靠拢路线图](docs/architecture/oci-k3s-roadmap.md)
+- [项目骨架](docs/architecture/stage1-skeleton.md)
+- [镜像存储布局](docs/architecture/stage3-image-layout.md)
+
+## License
+
+[MIT](LICENSE)
