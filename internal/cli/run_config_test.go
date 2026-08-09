@@ -1,8 +1,14 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"fish-container/internal/image"
 	"fish-container/internal/store"
 )
 
@@ -41,6 +47,43 @@ func TestResolveContainerConfigCommandOverride(t *testing.T) {
 	}
 	if env["A"] != "1" || env["B"] != "3" || env["C"] != "4" {
 		t.Fatalf("unexpected env merge result: %v", resolved.Env)
+	}
+}
+
+func TestLoadOrPullManifestRejectsCachedPlatformMismatch(t *testing.T) {
+	t.Parallel()
+
+	dataRoot := t.TempDir()
+	cfg := image.LoadConfigFromEnv(dataRoot)
+	cfg.Platform = image.Platform{OS: "linux", Architecture: "arm64"}
+	ref, err := image.ParseReference("alpine:test")
+	if err != nil {
+		t.Fatalf("parse reference: %v", err)
+	}
+	layout := image.NewLayout(dataRoot)
+	digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	manifest := image.Schema2Manifest{SchemaVersion: 2, Config: image.Descriptor{Digest: digest}}
+	manifestBody, _ := json.Marshal(manifest)
+	manifestPath := layout.ManifestPath(ref.Registry, ref.Repository, ref.Tag)
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("mkdir manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, manifestBody, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	imageCfg := image.ImageConfig{OS: "linux", Architecture: "amd64"}
+	configBody, _ := json.Marshal(imageCfg)
+	configPath := layout.ConfigPath(strings.TrimPrefix(digest, "sha256:"))
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config: %v", err)
+	}
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err = loadOrPullManifest(context.Background(), cfg, "alpine:test")
+	if err == nil || !strings.Contains(err.Error(), "cached image platform mismatch") {
+		t.Fatalf("expected cached platform mismatch, got %v", err)
 	}
 }
 

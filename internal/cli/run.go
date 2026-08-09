@@ -211,6 +211,9 @@ func loadOrPullManifest(ctx context.Context, cfg image.Config, imageRef string) 
 			if err == nil {
 				var imageCfg image.ImageConfig
 				if err := json.Unmarshal(configBody, &imageCfg); err == nil {
+					if err := image.ValidateImagePlatform(cfg.Platform, imageCfg); err != nil {
+						return nil, fmt.Errorf("cached image platform mismatch: %w", err)
+					}
 					_, _ = fmt.Fprintf(os.Stdout, "using local manifest: %s\n", manifestPath)
 					_, _ = fmt.Fprintf(os.Stdout, "using local config: %s\n", configPath)
 					return &image.ManifestResult{

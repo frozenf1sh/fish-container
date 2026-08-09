@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -69,13 +70,11 @@ func Start(spec RunSpec, attachIO bool) (*exec.Cmd, error) {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
-	if len(spec.Env) > 0 {
-		envPayload, err := json.Marshal(spec.Env)
-		if err != nil {
-			return nil, fmt.Errorf("marshal env payload: %w", err)
-		}
-		cmd.Env = append(os.Environ(), "FISH_CONTAINER_INIT_ENV_JSON="+string(envPayload))
+	envPayload, err := json.Marshal(spec.Env)
+	if err != nil {
+		return nil, fmt.Errorf("marshal env payload: %w", err)
 	}
+	cmd.Env = append(os.Environ(), "FISH_CONTAINER_INIT_ENV_JSON="+string(envPayload))
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNS,
 	}
@@ -126,18 +125,15 @@ func ChildMain(args []string) error {
 		}
 	}
 
-	bin, err := exec.LookPath(cmdArgs[0])
-	if err != nil {
-		return fmt.Errorf("lookup command: %w", err)
-	}
-
-	envVars := os.Environ()
+	var envVars []string
 	if envJSON := os.Getenv("FISH_CONTAINER_INIT_ENV_JSON"); envJSON != "" {
-		var parsed []string
-		if err := json.Unmarshal([]byte(envJSON), &parsed); err != nil {
+		if err := json.Unmarshal([]byte(envJSON), &envVars); err != nil {
 			return fmt.Errorf("decode init env payload: %w", err)
 		}
-		envVars = parsed
+	}
+	bin, err := lookPathInEnv(cmdArgs[0], envVars)
+	if err != nil {
+		return fmt.Errorf("lookup command: %w", err)
 	}
 
 	if err := syscall.Exec(bin, cmdArgs, envVars); err != nil {
@@ -145,6 +141,33 @@ func ChildMain(args []string) error {
 	}
 
 	return nil
+}
+
+func lookPathInEnv(file string, env []string) (string, error) {
+	if strings.ContainsRune(file, '/') {
+		return file, nil
+	}
+	pathValue := ""
+	for _, value := range env {
+		if key, candidate, ok := strings.Cut(value, "="); ok && key == "PATH" {
+			pathValue = candidate
+			break
+		}
+	}
+	if pathValue == "" {
+		return "", fmt.Errorf("PATH is not set for command %q", file)
+	}
+	for _, dir := range filepath.SplitList(pathValue) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, file)
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("executable %q not found in PATH", file)
 }
 
 func setupContainerRootfs(rootfs, hostname string) (err error) {

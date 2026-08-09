@@ -1,5 +1,20 @@
 package image
 
+// Platform identifies the target operating system and CPU architecture of an image.
+type Platform struct {
+	OS           string
+	Architecture string
+	Variant      string
+}
+
+func (p Platform) String() string {
+	value := p.OS + "/" + p.Architecture
+	if p.Variant != "" {
+		value += "/" + p.Variant
+	}
+	return value
+}
+
 // Descriptor follows OCI descriptor shape for manifests and layers.
 type Descriptor struct {
 	MediaType string `json:"mediaType"`

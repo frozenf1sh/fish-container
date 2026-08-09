@@ -48,7 +48,7 @@ func (p *manifestPuller) PullManifest(ctx context.Context, reference string) (*M
 	}
 
 	if mediaType == dockerManifestListType || mediaType == ociImageIndexType {
-		nextDigest, err := pickLinuxAMD64Manifest(body)
+		nextDigest, err := pickManifestForPlatform(body, p.cfg.Platform)
 		if err != nil {
 			return nil, err
 		}
@@ -76,6 +76,9 @@ func (p *manifestPuller) PullManifest(ctx context.Context, reference string) (*M
 
 	configPath, imageConfig, err := p.pullImageConfig(ctx, ref, manifest.Config, configDigestHex)
 	if err != nil {
+		return nil, err
+	}
+	if err := ValidateImagePlatform(p.cfg.Platform, imageConfig); err != nil {
 		return nil, err
 	}
 
@@ -213,13 +216,18 @@ func normalizeContentType(contentType string) string {
 	return strings.TrimSpace(parts[0])
 }
 
-func pickLinuxAMD64Manifest(body []byte) (string, error) {
+func pickManifestForPlatform(body []byte, target Platform) (string, error) {
+	if err := validateTargetPlatform(target); err != nil {
+		return "", err
+	}
+
 	var index struct {
 		Manifests []struct {
 			Digest   string `json:"digest"`
 			Platform struct {
 				OS           string `json:"os"`
 				Architecture string `json:"architecture"`
+				Variant      string `json:"variant,omitempty"`
 			} `json:"platform"`
 		} `json:"manifests"`
 	}
@@ -229,12 +237,38 @@ func pickLinuxAMD64Manifest(body []byte) (string, error) {
 	}
 
 	for _, item := range index.Manifests {
-		if item.Platform.OS == "linux" && item.Platform.Architecture == "amd64" {
+		if item.Platform.OS == target.OS &&
+			item.Platform.Architecture == target.Architecture &&
+			(target.Variant == "" || item.Platform.Variant == target.Variant) {
 			return item.Digest, nil
 		}
 	}
 
-	return "", fmt.Errorf("no linux/amd64 manifest found in index")
+	return "", fmt.Errorf("no %s manifest found in index", target.String())
+}
+
+// ValidateImagePlatform rejects image configs that cannot execute on the target host.
+func ValidateImagePlatform(target Platform, cfg ImageConfig) error {
+	if err := validateTargetPlatform(target); err != nil {
+		return err
+	}
+	if cfg.OS != "" && cfg.OS != target.OS {
+		return fmt.Errorf("image OS %s does not match target %s", cfg.OS, target.OS)
+	}
+	if cfg.Architecture != "" && cfg.Architecture != target.Architecture {
+		return fmt.Errorf("image architecture %s does not match target %s", cfg.Architecture, target.Architecture)
+	}
+	return nil
+}
+
+func validateTargetPlatform(target Platform) error {
+	if target.OS == "" || target.Architecture == "" {
+		return fmt.Errorf("target image platform is required")
+	}
+	if target.OS != "linux" || (target.Architecture != "amd64" && target.Architecture != "arm64") {
+		return fmt.Errorf("unsupported target image platform: %s (supported: linux/amd64, linux/arm64)", target.String())
+	}
+	return nil
 }
 
 func (p *manifestPuller) fetchDockerHubToken(ctx context.Context, repository string) (string, error) {

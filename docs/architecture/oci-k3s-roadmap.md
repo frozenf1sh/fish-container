@@ -37,7 +37,6 @@ kubelet
 - OCI spec 声明的 network namespace、masked paths 等配置未完全落到内核
 - cgroups 只创建目录，尚未加入进程或应用资源限制
 - 状态、PID 文件、退出码和强制回收语义尚未与 runc CLI 兼容
-- layer 解包缺少 whiteout、所有权、xattrs 和恶意路径防护
 
 在这些差距补齐前，项目不能宣称 OCI compliant，也不能安全运行不可信负载。
 
@@ -45,13 +44,15 @@ kubelet
 
 ### M0：固定基线
 
+状态：**已完成。** 验收入口为 `make test` 与 `make test-linux-e2e`，CI 在 Linux root 环境重复执行两条路径。
+
 目标：让当前能力可重复验证。
 
-- 只支持 Linux amd64/arm64，按宿主平台选择镜像 manifest
-- 增加特权 Linux CI 和端到端测试
-- 覆盖 local rootfs 与 OCI image 两条启动路径
-- 为所有未实现字段显式报错，避免“spec 写了但运行时忽略”
-- 加固 layer 解包：whiteout、UID/GID、xattrs、symlink escape 和特殊文件
+- [x] 只支持 Linux amd64/arm64，按宿主平台选择镜像 manifest
+- [x] 增加特权 Linux CI 和端到端测试
+- [x] 覆盖 local rootfs 与 OCI image 两条启动路径
+- [x] 为所有未实现字段显式报错，避免“spec 写了但运行时忽略”
+- [x] 加固 layer 解包：whiteout、UID/GID、xattrs、symlink escape 和特殊文件
 
 验收：在干净 Linux VM 中可重复运行 Alpine，并明确拒绝未支持的 OCI 配置。
 

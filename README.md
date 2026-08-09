@@ -48,6 +48,15 @@ sudo ./bin/fish-container state demo
 sudo ./bin/fish-container delete demo
 ```
 
+## 验证
+
+```bash
+make test
+make test-linux-e2e
+```
+
+E2E 在 root Linux 环境验证 local rootfs 与 OCI image 两条完整生命周期；测试脚本使用 Docker 生成一次性的本地 rootfs。
+
 ## 路线
 
 1. 使现有 engine 严格执行 OCI bundle 和生命周期语义

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -13,6 +14,7 @@ type Config struct {
 	DataRoot       string
 	RegistryMirror string
 	HTTPClient     *http.Client
+	Platform       Platform
 }
 
 func LoadConfigFromEnv(dataRoot string) Config {
@@ -26,6 +28,10 @@ func LoadConfigFromEnv(dataRoot string) Config {
 		DataRoot:       dataRoot,
 		RegistryMirror: strings.TrimSpace(getEnvInsensitive("FC_REGISTRY_MIRROR")),
 		HTTPClient:     client,
+		Platform: Platform{
+			OS:           runtime.GOOS,
+			Architecture: runtime.GOARCH,
+		},
 	}
 }
 
