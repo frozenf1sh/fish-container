@@ -12,8 +12,9 @@
 - 内容寻址存储、layer 解包和 overlayfs rootfs
 - 生成 OCI bundle 与 `config.json`
 - PID、UTS、IPC、mount namespace 和 `pivot_root`
-- `create`、`start`、`run`、`state`、`ps`、`kill`、`delete`
-- 文件化容器状态与初步 cgroups v2 支持
+- 带真实启动屏障的 `create` / `start` 生命周期
+- `state`、`ps`、`kill`、`delete --force` 与原子状态持久化
+- 外部 OCI bundle、PID 文件与初步 cgroups v2 支持
 
 尚未完整支持 OCI mounts、用户与 capabilities、seccomp、网络、`exec` 和 rootless。详见 [OCI 与 k3s 路线图](docs/architecture/oci-k3s-roadmap.md)。
 
@@ -47,6 +48,19 @@ sudo ./bin/fish-container run \
 sudo ./bin/fish-container state demo
 sudo ./bin/fish-container delete demo
 ```
+
+观察严格的 `created -> running -> stopped`：
+
+```bash
+sudo ./bin/fish-container create --image alpine:latest --container observer \
+  /bin/sh -c 'echo started; sleep 30'
+sudo ./bin/fish-container state observer
+sudo ./bin/fish-container start -d observer
+sudo ./bin/fish-container kill observer
+sudo ./bin/fish-container delete observer
+```
+
+`kill <id>` 默认发送 `SIGKILL`，避免 Linux PID namespace 中的 PID 1 忽略默认终止信号；优雅终止可显式执行 `kill <id> TERM`。
 
 ## 验证
 

@@ -11,7 +11,7 @@ type commandHandler func(args []string) error
 
 var commands = map[string]commandHandler{
 	runtime.InitCommandName(): runInitCommand,
-	startDaemonCommandName:    startDaemonCommand,
+	monitorCommandName:        monitorCommand,
 	"cleanup":                 runCleanupCommand,
 	"create":                  createCommand,
 	"delete":                  deleteCommand,

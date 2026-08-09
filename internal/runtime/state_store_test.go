@@ -56,3 +56,12 @@ func TestFileStateStoreContextCancel(t *testing.T) {
 		t.Fatalf("expected context canceled, got: %v", err)
 	}
 }
+
+func TestFileStateStoreRejectsUnsafeID(t *testing.T) {
+	t.Parallel()
+
+	store := NewFileStateStore(t.TempDir())
+	if _, err := store.Load(context.Background(), "../escape"); err == nil {
+		t.Fatal("expected unsafe container id to be rejected")
+	}
+}

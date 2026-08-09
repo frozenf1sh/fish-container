@@ -79,6 +79,7 @@ func runCommand(args []string) error {
 		user:         user,
 		envOverrides: envOverrides,
 		cmdOverride:  fs.Args(),
+		attachIO:     !detach,
 	}
 
 	if _, err := createContainer(context.Background(), opts); err != nil {
@@ -97,6 +98,7 @@ type createOptions struct {
 	user         string
 	envOverrides []string
 	cmdOverride  []string
+	attachIO     bool
 }
 
 type preparedImage struct {

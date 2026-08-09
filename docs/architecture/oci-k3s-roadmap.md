@@ -30,13 +30,12 @@ kubelet
 
 ## 当前差距
 
-当前实现已经能生成 bundle 并通过 namespaces、`pivot_root` 启动进程，但还没有严格执行 bundle：
+当前实现已能消费外部 bundle，并用同步屏障实现真实的 `create` / `start` 分离；距离 OCI 兼容仍有这些主要差距：
 
-- `create` 目前只生成 bundle 和状态文件，并未建立等待中的容器 init；`start` 才一次性创建并执行进程
 - 只消费 process 的部分字段，未完整执行 mounts、credentials、capabilities、rlimits 和 hooks
 - OCI spec 声明的 network namespace、masked paths 等配置未完全落到内核
 - cgroups 只创建目录，尚未加入进程或应用资源限制
-- 状态、PID 文件、退出码和强制回收语义尚未与 runc CLI 兼容
+- 已记录 PID、退出码并支持强制回收，但 CLI 参数、进程组信号和恢复语义尚未完全兼容 runc
 
 在这些差距补齐前，项目不能宣称 OCI compliant，也不能安全运行不可信负载。
 
@@ -58,21 +57,24 @@ kubelet
 
 ### M1：OCI 生命周期
 
+状态：**进行中。** 核心生命周期已经可运行和回归测试；异常恢复与完整 runc 语义仍待收口。
+
 目标：把 bundle 作为 runtime engine 的唯一事实来源。
 
-- `create --bundle <path> --pid-file <path> <id>`
+- [x] `create --bundle <path> --pid-file <path> <id>`
   - 校验 `config.json`
   - 创建 namespaces、rootfs、mounts 和容器 init
   - init 在同步管道上等待，状态保持 `created`
-- `start <id>`
+- [x] `start <id>`
   - 释放启动屏障
   - 执行用户进程，状态进入 `running`
-- `state <id>` 输出 OCI State JSON
-- `kill <id> <signal>` 正确处理 init 与全部进程
-- `delete [--force] <id>` 回收 mount、namespace、cgroup 和状态
-- `run` 仅作为 `create + start + wait + delete` 的便捷命令
+- [x] `state <id>` 输出 OCI State JSON，并持久化退出码与退出时间
+- [ ] `kill <id> <signal>`：已可靠处理 init，仍需补齐进程组 / `--all` 语义
+- [x] `delete [--force] <id>` 回收 mount、namespace、cgroup 和状态
+- [ ] `run` 收敛为 `create + start + wait + delete` 的便捷命令
+- [x] 状态文件采用原子替换，容器 ID 限制为安全的单路径组件
 
-必须支持异常恢复：进程提前退出、runtime 重启、重复 delete、残留 mount 和失效 PID 都应得到确定结果。
+异常恢复进度：进程提前退出、失效 PID 和 kill/delete 竞态已有确定结果；runtime 重启、幂等 delete 与残留 mount 的系统恢复仍待实现。
 
 验收：`create` 后用户程序尚未执行；`start` 后才执行；状态迁移与退出码稳定可测。
 

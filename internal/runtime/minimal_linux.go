@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,11 @@ import (
 )
 
 const initCommandName = "__init"
+
+const (
+	preparedStartFD = 3
+	preparedReadyFD = 4
+)
 
 // RunSpec defines the minimum configuration needed for isolated execution.
 type RunSpec struct {
@@ -39,8 +45,89 @@ func Run(spec RunSpec) error {
 	return nil
 }
 
+// PreparedProcess is an isolated container init waiting behind a start barrier.
+type PreparedProcess struct {
+	Cmd         *exec.Cmd
+	startWriter *os.File
+	readyReader *os.File
+}
+
+// Prepare creates the isolated process and rootfs, but does not execute the user command.
+func Prepare(spec RunSpec, attachIO bool) (*PreparedProcess, error) {
+	cmd, err := newContainerCommand(spec, attachIO, true)
+	if err != nil {
+		return nil, err
+	}
+
+	startReader, startWriter, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create start barrier: %w", err)
+	}
+	readyReader, readyWriter, err := os.Pipe()
+	if err != nil {
+		_ = startReader.Close()
+		_ = startWriter.Close()
+		return nil, fmt.Errorf("create ready barrier: %w", err)
+	}
+
+	cmd.ExtraFiles = []*os.File{startReader, readyWriter}
+	if err := cmd.Start(); err != nil {
+		_ = startReader.Close()
+		_ = startWriter.Close()
+		_ = readyReader.Close()
+		_ = readyWriter.Close()
+		return nil, fmt.Errorf("start isolated process: %w", err)
+	}
+	_ = startReader.Close()
+	_ = readyWriter.Close()
+
+	return &PreparedProcess{Cmd: cmd, startWriter: startWriter, readyReader: readyReader}, nil
+}
+
+// WaitReady waits until namespace and rootfs setup has completed.
+func (p *PreparedProcess) WaitReady() error {
+	if p == nil || p.readyReader == nil {
+		return fmt.Errorf("prepared process is not initialized")
+	}
+	defer p.readyReader.Close()
+	var signal [1]byte
+	if _, err := io.ReadFull(p.readyReader, signal[:]); err != nil {
+		return fmt.Errorf("container init exited before ready: %w", err)
+	}
+	return nil
+}
+
+// Start releases the prepared process to exec the configured user command.
+func (p *PreparedProcess) Start() error {
+	if p == nil || p.startWriter == nil {
+		return fmt.Errorf("prepared process is not initialized")
+	}
+	defer p.startWriter.Close()
+	if _, err := p.startWriter.Write([]byte{1}); err != nil {
+		return fmt.Errorf("release start barrier: %w", err)
+	}
+	return nil
+}
+
 // Start launches isolated process and returns running command handle.
 func Start(spec RunSpec, attachIO bool) (*exec.Cmd, error) {
+	prepared, err := Prepare(spec, attachIO)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepared.WaitReady(); err != nil {
+		_ = prepared.Cmd.Wait()
+		return nil, err
+	}
+	if err := prepared.Start(); err != nil {
+		_ = prepared.Cmd.Process.Kill()
+		_ = prepared.Cmd.Wait()
+		return nil, err
+	}
+	return prepared.Cmd, nil
+}
+
+func newContainerCommand(spec RunSpec, attachIO, prepared bool) (*exec.Cmd, error) {
 	if spec.Rootfs == "" {
 		return nil, errors.New("rootfs is required")
 	}
@@ -54,10 +141,14 @@ func Start(spec RunSpec, attachIO bool) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("stat rootfs: %w", err)
 	}
 
-	args := []string{initCommandName, "--rootfs", absRootfs, "--hostname", spec.Hostname, "--"}
+	args := []string{initCommandName, "--rootfs", absRootfs, "--hostname", spec.Hostname}
 	if spec.WorkDir != "" {
-		args = []string{initCommandName, "--rootfs", absRootfs, "--hostname", spec.Hostname, "--workdir", spec.WorkDir, "--"}
+		args = append(args, "--workdir", spec.WorkDir)
 	}
+	if prepared {
+		args = append(args, "--start-fd", fmt.Sprintf("%d", preparedStartFD), "--ready-fd", fmt.Sprintf("%d", preparedReadyFD))
+	}
+	args = append(args, "--")
 	if len(spec.Command) == 0 {
 		args = append(args, "/bin/sh")
 	} else {
@@ -79,10 +170,6 @@ func Start(spec RunSpec, attachIO bool) (*exec.Cmd, error) {
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNS,
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start isolated process: %w", err)
-	}
-
 	return cmd, nil
 }
 
@@ -99,9 +186,13 @@ func ChildMain(args []string) error {
 	var rootfs string
 	var hostname string
 	var workdir string
+	var startFD int
+	var readyFD int
 	fs.StringVar(&rootfs, "rootfs", "", "rootfs path")
 	fs.StringVar(&hostname, "hostname", "fish-container", "container hostname")
 	fs.StringVar(&workdir, "workdir", "", "container working directory")
+	fs.IntVar(&startFD, "start-fd", -1, "inherited start barrier fd")
+	fs.IntVar(&readyFD, "ready-fd", -1, "inherited ready barrier fd")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse init flags: %w", err)
@@ -134,6 +225,29 @@ func ChildMain(args []string) error {
 	bin, err := lookPathInEnv(cmdArgs[0], envVars)
 	if err != nil {
 		return fmt.Errorf("lookup command: %w", err)
+	}
+	if readyFD >= 0 {
+		ready := os.NewFile(uintptr(readyFD), "ready-barrier")
+		if ready == nil {
+			return fmt.Errorf("invalid ready barrier fd %d", readyFD)
+		}
+		if _, err := ready.Write([]byte{1}); err != nil {
+			_ = ready.Close()
+			return fmt.Errorf("signal container ready: %w", err)
+		}
+		_ = ready.Close()
+	}
+	if startFD >= 0 {
+		start := os.NewFile(uintptr(startFD), "start-barrier")
+		if start == nil {
+			return fmt.Errorf("invalid start barrier fd %d", startFD)
+		}
+		var signal [1]byte
+		if _, err := io.ReadFull(start, signal[:]); err != nil {
+			_ = start.Close()
+			return fmt.Errorf("wait for container start: %w", err)
+		}
+		_ = start.Close()
 	}
 
 	if err := syscall.Exec(bin, cmdArgs, envVars); err != nil {
