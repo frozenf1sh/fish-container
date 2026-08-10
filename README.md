@@ -43,6 +43,7 @@ sudo ./bin/fish-container pull alpine:latest
 sudo ./bin/fish-container run \
   --image alpine:latest \
   --container demo \
+  --keep \
   /bin/echo hello-from-fish
 
 sudo ./bin/fish-container state demo
@@ -60,7 +61,9 @@ sudo ./bin/fish-container kill observer
 sudo ./bin/fish-container delete observer
 ```
 
-`kill <id>` 默认发送 `SIGKILL`，避免 Linux PID namespace 中的 PID 1 忽略默认终止信号；优雅终止可显式执行 `kill <id> TERM`。
+foreground `run` 默认在退出后自动删除容器；需要继续执行 `state` 或检查文件时使用 `--keep`。`run -d` 始终保留容器，等待显式删除。
+
+`kill <id>` 默认发送 `SIGKILL`，避免 Linux PID namespace 中的 PID 1 忽略默认终止信号；优雅终止可显式执行 `kill <id> TERM`，向整个容器进程组发送信号可增加 `--all`。
 
 ## 验证
 

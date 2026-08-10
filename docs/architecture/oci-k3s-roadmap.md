@@ -57,7 +57,7 @@ kubelet
 
 ### M1：OCI 生命周期
 
-状态：**进行中。** 核心生命周期已经可运行和回归测试；异常恢复与完整 runc 语义仍待收口。
+状态：**已完成。** 核心生命周期、进程监督和恢复路径均由特权 Linux E2E 验证；完整 runc CLI 兼容属于 M3。
 
 目标：把 bundle 作为 runtime engine 的唯一事实来源。
 
@@ -69,12 +69,12 @@ kubelet
   - 释放启动屏障
   - 执行用户进程，状态进入 `running`
 - [x] `state <id>` 输出 OCI State JSON，并持久化退出码与退出时间
-- [ ] `kill <id> <signal>`：已可靠处理 init，仍需补齐进程组 / `--all` 语义
+- [x] `kill <id> <signal>`：支持 init 与 `--all` 进程组信号
 - [x] `delete [--force] <id>` 回收 mount、namespace、cgroup 和状态
-- [ ] `run` 收敛为 `create + start + wait + delete` 的便捷命令
+- [x] foreground `run` 收敛为 `create + start + wait + delete`，`--keep` 与 detached 模式可显式保留
 - [x] 状态文件采用原子替换，容器 ID 限制为安全的单路径组件
 
-异常恢复进度：进程提前退出、失效 PID 和 kill/delete 竞态已有确定结果；runtime 重启、幂等 delete 与残留 mount 的系统恢复仍待实现。
+异常恢复：CLI 重启不影响独立 monitor；进程提前退出、monitor 崩溃、失效 PID、重复 delete、状态丢失、残留 mount 及 kill/delete 竞态均有确定的恢复或清理路径。
 
 验收：`create` 后用户程序尚未执行；`start` 后才执行；状态迁移与退出码稳定可测。
 

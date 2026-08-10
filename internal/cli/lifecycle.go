@@ -169,51 +169,95 @@ func deleteCommand(args []string) error {
 		containerID = fs.Arg(0)
 	}
 
-	stateStore := runtime.NewFileStateStore(dataRoot)
-	state, err := stateStore.Load(context.Background(), containerID)
-	if err != nil {
-		return err
-	}
-	if err := reconcileStateIfExited(stateStore, state); err != nil {
-		return err
-	}
-	if (state.Status == runtime.StateRunning || state.Status == runtime.StateCreated) && force {
-		if err := syscall.Kill(state.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-			return fmt.Errorf("force-kill pid %d: %w", state.Pid, err)
-		}
-		if err := waitProcessExit(state.Pid, 5*time.Second); err != nil {
-			return err
-		}
-		if stopped, err := waitForMonitorStopped(context.Background(), stateStore, containerID, 2*time.Second); err != nil {
-			return err
-		} else if stopped != nil {
-			state = stopped
-		} else if err := reconcileStoppedState(stateStore, state); err != nil {
-			return err
-		}
-	}
-	if state.Status != runtime.StateStopped {
-		return fmt.Errorf("delete requires state=stopped, current=%s", state.Status)
-	}
-	if err := waitForMonitorExit(dataRoot, containerID, 2*time.Second); err != nil {
+	return deleteContainer(context.Background(), dataRoot, containerID, force)
+}
+
+func deleteContainer(ctx context.Context, dataRoot, containerID string, force bool) error {
+	if err := runtime.ValidateContainerID(containerID); err != nil {
 		return err
 	}
 
+	stateStore := runtime.NewFileStateStore(dataRoot)
+	state, err := stateStore.Load(ctx, containerID)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if state != nil {
+		if err := reconcileStateIfExited(stateStore, state); err != nil {
+			return err
+		}
+		switch state.Status {
+		case runtime.StateCreating:
+			if !force {
+				return fmt.Errorf("delete requires state=stopped, current=%s", state.Status)
+			}
+			if err := stopContainerMonitor(dataRoot, containerID, 2*time.Second); err != nil {
+				return err
+			}
+		case runtime.StateCreated, runtime.StateRunning:
+			if !force {
+				return fmt.Errorf("delete requires state=stopped, current=%s", state.Status)
+			}
+			if err := signalContainerProcess(state.Pid, syscall.SIGKILL, true); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("force-kill pid %d: %w", state.Pid, err)
+			}
+			if err := waitProcessExit(state.Pid, 5*time.Second); err != nil {
+				return err
+			}
+			if stopped, err := waitForMonitorStopped(ctx, stateStore, containerID, 2*time.Second); err != nil {
+				return err
+			} else if stopped != nil {
+				state = stopped
+			} else if err := reconcileStoppedState(stateStore, state); err != nil {
+				return err
+			}
+		case runtime.StateStopped:
+		default:
+			return fmt.Errorf("unsupported container state: %s", state.Status)
+		}
+	}
+	if state == nil && force && socketActive(monitorSocketPath(dataRoot, containerID)) {
+		if err := stopContainerMonitor(dataRoot, containerID, 2*time.Second); err != nil {
+			return err
+		}
+	}
+
+	if err := waitForMonitorExit(dataRoot, containerID, 2*time.Second); err != nil {
+		if !force {
+			return err
+		}
+		if err := stopContainerMonitor(dataRoot, containerID, 2*time.Second); err != nil {
+			return err
+		}
+	}
+	if err := cleanupContainerResources(ctx, dataRoot, containerID); err != nil {
+		return err
+	}
+
+	if state == nil {
+		_, _ = fmt.Fprintf(os.Stdout, "container already deleted: %s\n", containerID)
+	} else {
+		_, _ = fmt.Fprintf(os.Stdout, "container deleted: %s\n", containerID)
+	}
+	return nil
+}
+
+func cleanupContainerResources(ctx context.Context, dataRoot, containerID string) error {
 	mounter := image.NewSnapshotMounter(image.LoadConfigFromEnv(dataRoot))
-	_ = mounter.Unmount(context.Background(), containerID)
+	if err := mounter.Unmount(ctx, containerID); err != nil {
+		return err
+	}
 
 	layout := image.NewLayout(dataRoot)
 	if err := os.RemoveAll(layout.ContainerDir(containerID)); err != nil {
 		return fmt.Errorf("remove container dir: %w", err)
 	}
-	if err := stateStore.Delete(context.Background(), containerID); err != nil {
+	if err := runtime.NewFileStateStore(dataRoot).Delete(ctx, containerID); err != nil {
 		return err
 	}
-	if err := cgroups.NewManager().Delete(context.Background(), containerID); err != nil {
+	if err := cgroups.NewManager().Delete(ctx, containerID); err != nil {
 		return err
 	}
-
-	_, _ = fmt.Fprintf(os.Stdout, "container deleted: %s\n", containerID)
 	return nil
 }
 
@@ -224,9 +268,11 @@ func killCommand(args []string) error {
 	var dataRoot string
 	var containerID string
 	var signalValue string
+	var signalAll bool
 	fs.StringVar(&dataRoot, "data-root", "/var/lib/fish-container", "runtime data root")
 	fs.StringVar(&containerID, "container", "", "container id")
 	fs.StringVar(&signalValue, "signal", "KILL", "signal name or number")
+	fs.BoolVar(&signalAll, "all", false, "send the signal to the container process group")
 
 	if err := fs.Parse(args); err != nil {
 		return fmt.Errorf("parse kill flags: %w", err)
@@ -240,7 +286,7 @@ func killCommand(args []string) error {
 	positionals := fs.Args()
 	if containerID == "" {
 		if len(positionals) < 1 || len(positionals) > 2 {
-			return fmt.Errorf("usage: fish-container kill [--data-root PATH] [--signal KILL] <id> [signal]")
+			return fmt.Errorf("usage: fish-container kill [--data-root PATH] [--all] [--signal KILL] <id> [signal]")
 		}
 		containerID = positionals[0]
 		positionals = positionals[1:]
@@ -276,7 +322,7 @@ func killCommand(args []string) error {
 		return fmt.Errorf("invalid running pid in state: %d", state.Pid)
 	}
 
-	if err := syscall.Kill(state.Pid, sig); err != nil {
+	if err := signalContainerProcess(state.Pid, sig, signalAll); err != nil {
 		if errors.Is(err, syscall.ESRCH) {
 			if err := reconcileStoppedState(stateStore, state); err != nil {
 				return err
@@ -425,6 +471,22 @@ func waitProcessExit(pid int, timeout time.Duration) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("process %d still alive after %s", pid, timeout)
+}
+
+func signalContainerProcess(pid int, signal syscall.Signal, all bool) error {
+	if pid <= 0 {
+		return syscall.ESRCH
+	}
+	if !all {
+		return syscall.Kill(pid, signal)
+	}
+	if err := syscall.Kill(-pid, signal); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return syscall.Kill(pid, signal)
+		}
+		return err
+	}
+	return nil
 }
 
 func processAlive(pid int) bool {

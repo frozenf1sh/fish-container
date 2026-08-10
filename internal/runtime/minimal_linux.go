@@ -168,6 +168,7 @@ func newContainerCommand(spec RunSpec, attachIO, prepared bool) (*exec.Cmd, erro
 	cmd.Env = append(os.Environ(), "FISH_CONTAINER_INIT_ENV_JSON="+string(envPayload))
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNS,
+		Setpgid:    true,
 	}
 
 	return cmd, nil

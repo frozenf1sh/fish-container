@@ -30,7 +30,7 @@ docker_id=""
 
 cleanup() {
   set +e
-  for data_and_id in "$local_data:local-smoke" "$image_data:created-smoke" "$image_data:bundle-source" "$image_data:image-smoke" "$image_data:kill-smoke" "$external_data:external-smoke"; do
+  for data_and_id in "$local_data:local-smoke" "$image_data:created-smoke" "$image_data:bundle-source" "$image_data:image-smoke" "$image_data:kill-smoke" "$image_data:recovery-smoke" "$image_data:missing-state-smoke" "$external_data:external-smoke"; do
     data_root="${data_and_id%%:*}"
     container_id="${data_and_id##*:}"
     "$runtime_bin" delete --force --data-root "$data_root" "$container_id" >/dev/null 2>&1 || true
@@ -60,8 +60,8 @@ local_output="$($runtime_bin run \
   /bin/echo hello-local-rootfs 2>&1)"
 echo "$local_output"
 grep -q "hello-local-rootfs" <<<"$local_output"
-$runtime_bin state --data-root "$local_data" local-smoke | grep -q '"status": "stopped"'
-$runtime_bin delete --data-root "$local_data" local-smoke
+test ! -e "$local_data/runtime/local-smoke/state.json"
+test ! -e "$local_data/containers/local-smoke"
 
 echo "[e2e] OCI image lifecycle"
 $runtime_bin pull --data-root "$image_data" alpine:3.22
@@ -105,8 +105,8 @@ image_output="$($runtime_bin run \
   /bin/echo hello-oci-image 2>&1)"
 echo "$image_output"
 grep -q "hello-oci-image" <<<"$image_output"
-$runtime_bin state --data-root "$image_data" image-smoke | grep -q '"status": "stopped"'
-$runtime_bin delete --data-root "$image_data" image-smoke
+test ! -e "$image_data/runtime/image-smoke/state.json"
+test ! -e "$image_data/snapshots/overlay/image-smoke"
 
 echo "[e2e] PID namespace init kill and delete"
 $runtime_bin run \
@@ -121,11 +121,50 @@ for _ in $(seq 1 50); do
   fi
   sleep 0.1
 done
-$runtime_bin kill --data-root "$image_data" kill-smoke
+$runtime_bin kill --all --data-root "$image_data" kill-smoke
 $runtime_bin state --data-root "$image_data" kill-smoke | tee "$test_root/kill-state.json" | grep -q '"status": "stopped"'
 grep -q '"fish-container.io/exit-status": "137"' "$test_root/kill-state.json"
 $runtime_bin delete --data-root "$image_data" kill-smoke
 sleep 0.1
 test ! -e "$image_data/runtime/kill-smoke/state.json"
 
-echo "[e2e] PASS: M1 lifecycle, OCI bundle, local rootfs, and OCI image paths"
+echo "[e2e] monitor crash recovery and idempotent delete"
+$runtime_bin create \
+  --data-root "$image_data" \
+  --image alpine:3.22 \
+  --container recovery-smoke \
+  /bin/true
+monitor_pid="$(cat "$image_data/runtime/recovery-smoke/monitor.pid")"
+kill -KILL "$monitor_pid"
+for _ in $(seq 1 50); do
+  if $runtime_bin state --data-root "$image_data" recovery-smoke 2>/dev/null | grep -q '"status": "stopped"'; then
+    break
+  fi
+  sleep 0.1
+done
+$runtime_bin state --data-root "$image_data" recovery-smoke | grep -q '"status": "stopped"'
+$runtime_bin delete --force --data-root "$image_data" recovery-smoke
+$runtime_bin delete --force --data-root "$image_data" recovery-smoke | grep -q 'already deleted'
+
+echo "[e2e] cleanup with missing runtime state"
+$runtime_bin create \
+  --data-root "$image_data" \
+  --image alpine:3.22 \
+  --container missing-state-smoke \
+  /bin/sh -c 'while true; do sleep 1; done'
+$runtime_bin start -d --data-root "$image_data" missing-state-smoke
+init_pid="$(sed -n 's/^[[:space:]]*"pid": \([0-9][0-9]*\),*$/\1/p' "$image_data/runtime/missing-state-smoke/state.json")"
+test "$init_pid" -gt 0
+rm "$image_data/runtime/missing-state-smoke/state.json"
+$runtime_bin delete --force --data-root "$image_data" missing-state-smoke
+test ! -e "$image_data/containers/missing-state-smoke"
+test ! -e "$image_data/snapshots/overlay/missing-state-smoke"
+for _ in $(seq 1 50); do
+  if [[ ! -e "/proc/$init_pid/stat" ]] || [[ "$(awk '{print $3}' "/proc/$init_pid/stat")" == "Z" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+test ! -e "/proc/$init_pid/stat" || [[ "$(awk '{print $3}' "/proc/$init_pid/stat")" == "Z" ]]
+
+echo "[e2e] PASS: M1 lifecycle, recovery, OCI bundle, local rootfs, and OCI image paths"

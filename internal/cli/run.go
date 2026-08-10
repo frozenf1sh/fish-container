@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -40,6 +41,7 @@ func runCommand(args []string) error {
 	var workdir string
 	var user string
 	var detach bool
+	var keep bool
 	var keepSnapshot bool
 	var envOverrides envListFlag
 	fs.StringVar(&rootfs, "rootfs", "", "local rootfs path")
@@ -50,6 +52,7 @@ func runCommand(args []string) error {
 	fs.StringVar(&workdir, "workdir", "", "override container working directory")
 	fs.StringVar(&user, "user", "", "override container user")
 	fs.BoolVar(&detach, "d", false, "run container in background")
+	fs.BoolVar(&keep, "keep", false, "keep container state and resources after a foreground run")
 	fs.BoolVar(&keepSnapshot, "keep-snapshot", false, "deprecated: lifecycle mode keeps snapshot until delete")
 	fs.Var(&envOverrides, "env", "override environment variable, e.g. --env KEY=VALUE")
 
@@ -82,10 +85,16 @@ func runCommand(args []string) error {
 		attachIO:     !detach,
 	}
 
-	if _, err := createContainer(context.Background(), opts); err != nil {
+	ctx := context.Background()
+	if _, err := createContainer(ctx, opts); err != nil {
 		return err
 	}
-	return startContainer(context.Background(), dataRoot, containerID, detach)
+	startErr := startContainer(ctx, dataRoot, containerID, detach)
+	if detach || keep {
+		return startErr
+	}
+	deleteErr := deleteContainer(context.Background(), dataRoot, containerID, true)
+	return errors.Join(startErr, deleteErr)
 }
 
 type createOptions struct {
