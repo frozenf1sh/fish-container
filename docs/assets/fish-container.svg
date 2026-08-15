@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">fish-container</title>
+  <desc id="desc">A minimal geometric fish logo inside a thin isometric container frame, with the fish-container project name and supported features.</desc>
+  <rect width="1200" height="300" fill="#FFFFFF"/>
+  <g fill="none" stroke="#8AA8EE" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" style="" transform="matrix(0.819814, 0, 0, 0.819814, 105.32579, 39.511024)">
+    <path d="M284 72 352 32 420 72 352 112Z"/>
+    <path d="M284 130 352 90 420 130 352 170Z"/>
+    <path d="M284 72v58M352 32v58M420 72v58M352 112v58"/>
+  </g>
+  <g fill="#FFFFFF" stroke="#6F94E8" stroke-width="1.3" style="" transform="matrix(0.819814, 0, 0, 0.819814, 105.32579, 39.511024)">
+    <circle cx="284" cy="72" r="3.5"/>
+    <circle cx="352" cy="32" r="3.5"/>
+    <circle cx="420" cy="72" r="3.5"/>
+    <circle cx="352" cy="112" r="3.5"/>
+    <circle cx="284" cy="130" r="3.5"/>
+    <circle cx="352" cy="90" r="3.5"/>
+    <circle cx="420" cy="130" r="3.5"/>
+    <circle cx="352" cy="170" r="3.5"/>
+  </g>
+  <g transform="matrix(0.666654, 0, 0, 0.629797, 348.482574, 84.931206)" fill="#3F72E8" style="">
+    <path d="M0 60 50 16 96 47 126 24 114 60 126 96 96 73 50 104Z"/>
+  </g>
+  <text x="496" y="132" fill="#2F66D5" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="64" font-weight="600" letter-spacing="-1.8" style="white-space: pre;">fish-container</text>
+  <text x="496" y="172" fill="#2F66D5" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="24" font-weight="400" style="white-space: pre;">轻量 OCI 容器运行时</text>
+  <text x="600" y="238" fill="#7B8794" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="400" text-anchor="middle" style="white-space: pre;">OCI Runtime  ·  Namespace  ·  cgroups v2  ·  OverlayFS  ·  containerd / k3s</text>
+</svg>

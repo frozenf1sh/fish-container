@@ -1,5 +1,11 @@
 # fish-container
 
+<p align="center">
+  <img src="docs/assets/fish-container.svg"
+       alt="fish-container logo and supported features"
+       width="960">
+</p>
+
 一个用 Go 手写的 Linux 容器运行时，用于学习 OCI Runtime、Linux namespace、cgroups 和容器生命周期。
 
 项目以**可读、可观察、可验证**为目标，不替代 Docker 或 runc。最终目标是作为自定义 OCI runtime 接入 containerd/k3s，并完整观察 Pod 从创建到退出的运行过程。
@@ -18,19 +24,9 @@
 
 尚未完整支持 OCI mounts、用户与 capabilities、seccomp、网络、`exec` 和 rootless。详见 [OCI 与 k3s 路线图](docs/architecture/oci-k3s-roadmap.md)。
 
-## 架构
+## 定位
 
-```text
-image reference
-  -> manifest / config / layers
-  -> CAS + unpack
-  -> overlay rootfs
-  -> OCI bundle
-  -> namespaces + pivot_root
-  -> process lifecycle + state
-```
-
-接入 k3s 后，镜像、snapshot 和 CNI 由 containerd/k3s 负责，fish-container 专注于消费 OCI bundle 并管理容器进程。
+fish-container 既可以独立拉取镜像并创建 rootfs，也可以在接入 k3s 后消费 containerd 生成的 OCI bundle，专注于 Linux 隔离与容器进程生命周期。
 
 ## 快速体验
 

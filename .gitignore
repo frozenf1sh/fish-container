@@ -38,3 +38,5 @@ docs-private/
 
 # tmp file
 .tmp-data/
+
+.vscode/
